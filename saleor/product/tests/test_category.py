@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
-from saleor.product.models import Category
-from saleor.product.utils import collect_categories_tree_products, delete_categories
+from ..models import Category
+from ..utils import collect_categories_tree_products, delete_categories
 
 
 def test_collect_categories_tree_products(categories_tree):
@@ -32,9 +32,10 @@ def test_delete_categories(
         id__in=[category.id for category in [parent, child]]
     ).exists()
 
-    mock_update_products_minimal_variant_prices_task.delay.assert_called_once_with(
-        product_ids=[p.pk for p in product_list]
-    )
+    calls = mock_update_products_minimal_variant_prices_task.mock_calls
+    assert len(calls) == 1
+    call_kwargs = calls[0].kwargs
+    assert set(call_kwargs["product_ids"]) == {p.pk for p in product_list}
 
     for product in product_list:
         product.refresh_from_db()

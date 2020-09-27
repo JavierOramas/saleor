@@ -2,10 +2,10 @@ import graphene
 from django.contrib.auth import get_user_model, models as auth_models
 from graphene import relay
 from graphene_federation import key
-from graphql_jwt.exceptions import PermissionDenied
 
 from ...account import models
 from ...checkout.utils import get_user_checkout
+from ...core.exceptions import PermissionDenied
 from ...core.permissions import AccountPermissions, OrderPermissions
 from ...order import models as order_models
 from ..checkout.types import Checkout
@@ -298,8 +298,8 @@ class User(CountableDjangoObjectType):
     def resolve_orders(root: models.User, info, **_kwargs):
         viewer = info.context.user
         if viewer.has_perm(OrderPermissions.MANAGE_ORDERS):
-            return root.orders.all()
-        return root.orders.confirmed()
+            return root.orders.all()  # type: ignore
+        return root.orders.confirmed()  # type: ignore
 
     @staticmethod
     def resolve_avatar(root: models.User, info, size=None, **_kwargs):

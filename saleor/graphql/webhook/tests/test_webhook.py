@@ -3,14 +3,11 @@ from unittest.mock import patch
 import graphene
 import pytest
 
-from saleor.app.models import App
-from saleor.graphql.tests.utils import assert_no_permission, get_graphql_content
-from saleor.graphql.webhook.enums import (
-    WebhookEventTypeEnum,
-    WebhookSampleEventTypeEnum,
-)
-from saleor.webhook.event_types import WebhookEventType
-from saleor.webhook.models import Webhook
+from ....app.models import App
+from ....webhook.event_types import WebhookEventType
+from ....webhook.models import Webhook
+from ...tests.utils import assert_no_permission, get_graphql_content
+from ..enums import WebhookEventTypeEnum, WebhookSampleEventTypeEnum
 
 WEBHOOK_CREATE_BY_APP = """
     mutation webhookCreate($name: String, $target_url: String,
@@ -113,7 +110,7 @@ WEBHOOK_CREATE_BY_STAFF = """
 
 
 def test_webhook_create_by_staff(
-    staff_api_client, app, permission_manage_webhooks, permission_manage_orders,
+    staff_api_client, app, permission_manage_apps, permission_manage_orders,
 ):
     query = WEBHOOK_CREATE_BY_STAFF
     app.permissions.add(permission_manage_orders)
@@ -123,7 +120,7 @@ def test_webhook_create_by_staff(
         "events": [WebhookEventTypeEnum.ORDER_CREATED.name],
         "app": app_id,
     }
-    staff_api_client.user.user_permissions.add(permission_manage_webhooks)
+    staff_api_client.user.user_permissions.add(permission_manage_apps)
     response = staff_api_client.post_graphql(query, variables=variables)
     get_graphql_content(response)
     new_webhook = Webhook.objects.get()
@@ -265,7 +262,7 @@ def test_webhook_update_not_allowed_by_app(app_api_client, app, webhook):
 
 
 def test_webhook_update_by_staff(
-    staff_api_client, app, webhook, permission_manage_webhooks
+    staff_api_client, app, webhook, permission_manage_apps
 ):
     query = WEBHOOK_UPDATE
     webhook_id = graphene.Node.to_global_id("Webhook", webhook.pk)
@@ -277,7 +274,7 @@ def test_webhook_update_by_staff(
         ],
         "is_active": False,
     }
-    staff_api_client.user.user_permissions.add(permission_manage_webhooks)
+    staff_api_client.user.user_permissions.add(permission_manage_apps)
     response = staff_api_client.post_graphql(query, variables=variables)
     get_graphql_content(response)
     webhook.refresh_from_db()
@@ -322,12 +319,12 @@ QUERY_WEBHOOKS = """
 """
 
 
-def test_query_webhooks_by_staff(staff_api_client, webhook, permission_manage_webhooks):
+def test_query_webhooks_by_staff(staff_api_client, webhook, permission_manage_apps):
     query = QUERY_WEBHOOKS
     webhook.id = None
     webhook.save()
     variables = {"filter": {}}
-    staff_api_client.user.user_permissions.add(permission_manage_webhooks)
+    staff_api_client.user.user_permissions.add(permission_manage_apps)
     response = staff_api_client.post_graphql(query, variables=variables)
     content = get_graphql_content(response)
     webhooks = content["data"]["webhooks"]["edges"]
@@ -369,7 +366,7 @@ def test_query_webhooks_by_app(app_api_client, webhook):
     ],
 )
 def test_query_webhooks_with_filters(
-    webhook_filter, staff_api_client, webhook, permission_manage_webhooks
+    webhook_filter, staff_api_client, webhook, permission_manage_apps
 ):
     second_app = App.objects.create(name="Second sample app account", is_active=False)
     second_webhook = Webhook.objects.create(
@@ -382,7 +379,7 @@ def test_query_webhooks_with_filters(
 
     query = QUERY_WEBHOOKS
     variables = {"filter": webhook_filter}
-    staff_api_client.user.user_permissions.add(permission_manage_webhooks)
+    staff_api_client.user.user_permissions.add(permission_manage_apps)
     response = staff_api_client.post_graphql(query, variables=variables)
     content = get_graphql_content(response)
     webhooks = content["data"]["webhooks"]["edges"]
@@ -418,7 +415,7 @@ QUERY_WEBHOOKS_WITH_SORT = """
     ],
 )
 def test_query_webhooks_with_sort(
-    webhooks_sort, result_order, staff_api_client, permission_manage_webhooks
+    webhooks_sort, result_order, staff_api_client, permission_manage_apps
 ):
     backupApp = App.objects.create(name="backupApp", is_active=True)
     app = App.objects.create(name="app", is_active=True)
@@ -434,7 +431,7 @@ def test_query_webhooks_with_sort(
         ]
     )
     variables = {"sort_by": webhooks_sort}
-    staff_api_client.user.user_permissions.add(permission_manage_webhooks)
+    staff_api_client.user.user_permissions.add(permission_manage_apps)
     response = staff_api_client.post_graphql(QUERY_WEBHOOKS_WITH_SORT, variables)
     content = get_graphql_content(response)
     webhooks = content["data"]["webhooks"]["edges"]
@@ -470,12 +467,12 @@ QUERY_WEBHOOK = """
 """
 
 
-def test_query_webhook_by_staff(staff_api_client, webhook, permission_manage_webhooks):
+def test_query_webhook_by_staff(staff_api_client, webhook, permission_manage_apps):
     query = QUERY_WEBHOOK
 
     webhook_id = graphene.Node.to_global_id("Webhook", webhook.pk)
     variables = {"id": webhook_id}
-    staff_api_client.user.user_permissions.add(permission_manage_webhooks)
+    staff_api_client.user.user_permissions.add(permission_manage_apps)
     response = staff_api_client.post_graphql(query, variables=variables)
 
     content = get_graphql_content(response)
@@ -537,9 +534,9 @@ WEBHOOK_EVENTS_QUERY = """
 """
 
 
-def test_query_webhook_events(staff_api_client, permission_manage_webhooks):
+def test_query_webhook_events(staff_api_client, permission_manage_apps):
     query = WEBHOOK_EVENTS_QUERY
-    staff_api_client.user.user_permissions.add(permission_manage_webhooks)
+    staff_api_client.user.user_permissions.add(permission_manage_apps)
     response = staff_api_client.post_graphql(query)
     content = get_graphql_content(response)
     webhook_events = content["data"]["webhookEvents"]
@@ -573,7 +570,10 @@ SAMPLE_PAYLOAD_QUERY = """
         (WebhookSampleEventTypeEnum.ORDER_FULFILLED, True),
         (WebhookSampleEventTypeEnum.CUSTOMER_CREATED, False),
         (WebhookSampleEventTypeEnum.PRODUCT_CREATED, False),
+        (WebhookSampleEventTypeEnum.PRODUCT_UPDATED, False),
         (WebhookSampleEventTypeEnum.CHECKOUT_QUANTITY_CHANGED, False),
+        (WebhookSampleEventTypeEnum.CHECKOUT_CREATED, False),
+        (WebhookSampleEventTypeEnum.CHECKOUT_UPDATED, False),
         (WebhookSampleEventTypeEnum.FULFILLMENT_CREATED, True),
     ],
 )
@@ -611,7 +611,10 @@ def test_sample_payload_query_by_app(
         (WebhookSampleEventTypeEnum.ORDER_FULFILLED, False),
         (WebhookSampleEventTypeEnum.CUSTOMER_CREATED, True),
         (WebhookSampleEventTypeEnum.PRODUCT_CREATED, True),
+        (WebhookSampleEventTypeEnum.PRODUCT_UPDATED, True),
         (WebhookSampleEventTypeEnum.CHECKOUT_QUANTITY_CHANGED, True),
+        (WebhookSampleEventTypeEnum.CHECKOUT_CREATED, True),
+        (WebhookSampleEventTypeEnum.CHECKOUT_UPDATED, True),
         (WebhookSampleEventTypeEnum.FULFILLMENT_CREATED, False),
     ],
 )

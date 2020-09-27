@@ -1,12 +1,9 @@
-from decimal import Decimal
-
 import pytest
 from django.utils.text import slugify
-from prices import Money
 
-from saleor.account.models import Address
-from saleor.product.models import Product
-from saleor.search.backends.postgresql import search_storefront
+from ...account.models import Address
+from ...product.models import Product
+from ...search.backends.postgresql import search_storefront
 
 PRODUCTS = [
     ("Arabica Coffee", "The best grains in galactic"),
@@ -22,7 +19,6 @@ def named_products(category, product_type):
             name=name,
             slug=slugify(name),
             description=description,
-            price=Money(Decimal(6.6), "USD"),
             product_type=product_type,
             category=category,
             is_published=True,

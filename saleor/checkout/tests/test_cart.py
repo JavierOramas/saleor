@@ -1,13 +1,11 @@
-from uuid import uuid4
-
 import pytest
 from measurement.measures import Weight
 from prices import Money, TaxedMoney
 
-from saleor.checkout import calculations, utils
-from saleor.checkout.models import Checkout
-from saleor.checkout.utils import add_variant_to_checkout
-from saleor.product.models import Category
+from ...product.models import Category
+from .. import calculations, utils
+from ..models import Checkout
+from ..utils import add_variant_to_checkout
 
 
 @pytest.fixture()
@@ -30,22 +28,6 @@ def test_get_or_create_user_checkout(
     assert Checkout.objects.all().count() == 3
     assert checkout in checkouts
     assert checkout.user == admin_user
-
-
-def test_get_anonymous_checkout_from_token(anonymous_checkout, user_checkout):
-    checkout = utils.get_anonymous_checkout_from_token(anonymous_checkout.token)
-    assert Checkout.objects.all().count() == 2
-    assert checkout == anonymous_checkout
-
-    # test against new token
-    checkout = utils.get_anonymous_checkout_from_token(uuid4())
-    assert Checkout.objects.all().count() == 2
-    assert checkout is None
-
-    # test against getting checkout assigned to user
-    checkout = utils.get_anonymous_checkout_from_token(user_checkout.token)
-    assert Checkout.objects.all().count() == 2
-    assert checkout is None
 
 
 def test_get_user_checkout(

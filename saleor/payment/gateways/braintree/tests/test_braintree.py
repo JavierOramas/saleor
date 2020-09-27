@@ -7,7 +7,9 @@ from braintree.errors import Errors
 from braintree.validation_error import ValidationError
 from django.core.exceptions import ImproperlyConfigured
 
-from saleor.payment.gateways.braintree import (
+from ....interface import CustomerSource, GatewayConfig, PaymentMethodInfo, TokenConfig
+from ....utils import create_payment_information
+from .. import (
     TransactionKind,
     authorize,
     capture,
@@ -20,17 +22,7 @@ from saleor.payment.gateways.braintree import (
     refund,
     void,
 )
-from saleor.payment.gateways.braintree.errors import (
-    DEFAULT_ERROR_MESSAGE,
-    BraintreeException,
-)
-from saleor.payment.interface import (
-    CreditCardInfo,
-    CustomerSource,
-    GatewayConfig,
-    TokenConfig,
-)
-from saleor.payment.utils import create_payment_information
+from ..errors import DEFAULT_ERROR_MESSAGE, BraintreeException
 
 DEFAULT_ERROR = "Unable to process transaction. Please try again in a moment"
 
@@ -92,6 +84,7 @@ def gateway_config():
             "public_key": "456",
             "private_key": "789",
         },
+        supported_currencies="USD",
     )
 
 
@@ -281,6 +274,11 @@ def test_authorize_one_time(
     assert response.amount == braintree_success_response.transaction.amount
     assert response.currency == braintree_success_response.transaction.currency_iso_code
     assert response.is_success is True
+    assert response.payment_method_info.last_4 == "1881"
+    assert response.payment_method_info.brand == "visa"
+    assert response.payment_method_info.type == "card"
+    assert response.payment_method_info.exp_month == "12"
+    assert response.payment_method_info.exp_year == "2020"
 
 
 @pytest.mark.integration
@@ -403,8 +401,8 @@ def test_void_incorrect_token(payment_txn_preauth, sandbox_braintree_gateway_con
 @pytest.mark.vcr(filter_headers=["authorization"])
 def test_list_customer_sources(sandbox_braintree_gateway_config):
     CUSTOMER_ID = "595109854"  # retrieved from sandbox
-    expected_credit_card = CreditCardInfo(
-        last_4="1881", exp_year=2020, exp_month=12, name_on_card=None
+    expected_credit_card = PaymentMethodInfo(
+        last_4="1881", exp_year=2020, exp_month=12, name=None
     )
     expected_customer_source = CustomerSource(
         id="d0b52c80b648ae8e5a14eddcaf24d254",

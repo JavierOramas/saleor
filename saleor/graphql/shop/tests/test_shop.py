@@ -4,13 +4,13 @@ import graphene
 import pytest
 from django_countries import countries
 
-from saleor.account.models import Address
-from saleor.core.error_codes import ShopErrorCode
-from saleor.core.permissions import get_permissions_codename
-from saleor.graphql.core.utils import str_to_enum
-from saleor.graphql.tests.utils import get_graphql_content
-from saleor.site import AuthenticationBackends
-from saleor.site.models import Site
+from ....account.models import Address
+from ....core.error_codes import ShopErrorCode
+from ....core.permissions import get_permissions_codename
+from ....site import AuthenticationBackends
+from ....site.models import Site
+from ...core.utils import str_to_enum
+from ...tests.utils import get_graphql_content
 
 
 def test_query_authorization_keys(
@@ -682,22 +682,59 @@ def test_query_geolocalization(user_api_client):
     assert data["country"] is None
 
 
-def test_query_available_payment_gateways(user_api_client):
-    query = """
-        query {
-            shop {
-                availablePaymentGateways {
-                    id
-                    name
-                }
+AVAILABLE_PAYMENT_GATEWAYS_QUERY = """
+    query Shop($currency: String){
+        shop {
+            availablePaymentGateways(currency: $currency) {
+                id
+                name
             }
         }
-    """
+    }
+"""
+
+
+def test_query_available_payment_gateways(user_api_client, sample_gateway):
+    query = AVAILABLE_PAYMENT_GATEWAYS_QUERY
     response = user_api_client.post_graphql(query)
     content = get_graphql_content(response)
     data = content["data"]["shop"]["availablePaymentGateways"]
-    assert data[0]["id"] == "mirumee.payments.dummy"
-    assert data[0]["name"] == "Dummy"
+    assert {gateway["id"] for gateway in data} == {
+        "mirumee.payments.dummy",
+        "sampleDummy.active",
+    }
+    assert {gateway["name"] for gateway in data} == {
+        "Dummy",
+        "SampleDummy",
+    }
+
+
+def test_query_available_payment_gateways_specified_currency_USD(
+    user_api_client, sample_gateway
+):
+    query = AVAILABLE_PAYMENT_GATEWAYS_QUERY
+    response = user_api_client.post_graphql(query, {"currency": "USD"})
+    content = get_graphql_content(response)
+    data = content["data"]["shop"]["availablePaymentGateways"]
+    assert {gateway["id"] for gateway in data} == {
+        "mirumee.payments.dummy",
+        "sampleDummy.active",
+    }
+    assert {gateway["name"] for gateway in data} == {
+        "Dummy",
+        "SampleDummy",
+    }
+
+
+def test_query_available_payment_gateways_specified_currency_PLN(
+    user_api_client, sample_gateway
+):
+    query = AVAILABLE_PAYMENT_GATEWAYS_QUERY
+    response = user_api_client.post_graphql(query, {"currency": "PLN"})
+    content = get_graphql_content(response)
+    data = content["data"]["shop"]["availablePaymentGateways"]
+    assert data[0]["id"] == "sampleDummy.active"
+    assert data[0]["name"] == "SampleDummy"
 
 
 AUTHORIZATION_KEY_ADD = """

@@ -1,3 +1,5 @@
+from typing import Optional
+
 import graphene
 from django.conf import settings
 from django.utils import translation
@@ -8,7 +10,6 @@ from phonenumbers import COUNTRY_CODE_TO_REGION_CODE
 from ...account import models as account_models
 from ...core.permissions import SitePermissions, get_permissions
 from ...core.utils import get_client_ip, get_country_by_ip
-from ...menu import models as menu_models
 from ...plugins.manager import get_plugins_manager
 from ...product import models as product_models
 from ...site import models as site_models
@@ -18,6 +19,7 @@ from ..core.enums import WeightUnitsEnum
 from ..core.types.common import CountryDisplay, LanguageDisplay, Permission
 from ..core.utils import str_to_enum
 from ..decorators import permission_required
+from ..menu.dataloaders import MenuByIdLoader
 from ..menu.types import Menu
 from ..product.types import Collection
 from ..translations.enums import LanguageCodeEnum
@@ -66,6 +68,11 @@ class Geolocalization(graphene.ObjectType):
 class Shop(graphene.ObjectType):
     available_payment_gateways = graphene.List(
         graphene.NonNull(PaymentGateway),
+        currency=graphene.Argument(
+            graphene.String,
+            description="A currency for which gateways will be returned.",
+            required=False,
+        ),
         description="List of available payment gateways.",
         required=True,
     )
@@ -166,8 +173,8 @@ class Shop(graphene.ObjectType):
         )
 
     @staticmethod
-    def resolve_available_payment_gateways(_, _info):
-        return [gtw for gtw in get_plugins_manager().list_payment_gateways()]
+    def resolve_available_payment_gateways(_, _info, currency: Optional[str] = None):
+        return get_plugins_manager().list_payment_gateways(currency=currency)
 
     @staticmethod
     @permission_required(SitePermissions.MANAGE_SETTINGS)
@@ -238,10 +245,17 @@ class Shop(graphene.ObjectType):
     @staticmethod
     def resolve_navigation(_, info):
         site_settings = info.context.site.settings
-        qs = menu_models.Menu.objects.all()
-        top_menu = qs.filter(pk=site_settings.top_menu_id).first()
-        bottom_menu = qs.filter(pk=site_settings.bottom_menu_id).first()
-        return Navigation(main=top_menu, secondary=bottom_menu)
+        main = (
+            MenuByIdLoader(info.context).load(site_settings.top_menu_id)
+            if site_settings.top_menu_id
+            else None
+        )
+        secondary = (
+            MenuByIdLoader(info.context).load(site_settings.bottom_menu_id)
+            if site_settings.bottom_menu_id
+            else None
+        )
+        return Navigation(main=main, secondary=secondary)
 
     @staticmethod
     def resolve_permissions(_, _info):

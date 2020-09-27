@@ -1,14 +1,16 @@
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
 from django.utils import timezone
 from prices import Money
 
-from saleor.checkout.utils import get_voucher_discount_for_checkout
-from saleor.discount import DiscountInfo, DiscountValueType, VoucherType
-from saleor.discount.models import NotApplicable, Sale, Voucher, VoucherCustomer
-from saleor.discount.templatetags.voucher import discount_as_negative
-from saleor.discount.utils import (
+from ...checkout.utils import get_voucher_discount_for_checkout
+from ...product.models import Product, ProductVariant
+from .. import DiscountInfo, DiscountValueType, VoucherType
+from ..models import NotApplicable, Sale, Voucher, VoucherCustomer
+from ..templatetags.voucher import discount_as_negative
+from ..utils import (
     add_voucher_usage_by_customer,
     decrease_voucher_usage,
     get_product_discount_on_sale,
@@ -16,7 +18,6 @@ from saleor.discount.utils import (
     remove_voucher_usage_by_customer,
     validate_voucher,
 )
-from saleor.product.models import Product, ProductVariant
 
 
 @pytest.mark.parametrize(
@@ -139,28 +140,30 @@ def test_sale_applies_to_correct_products(product_type, category):
     product = Product.objects.create(
         name="Test Product",
         slug="test-product",
-        price=Money(10, "USD"),
         description="",
         pk=111,
         product_type=product_type,
         category=category,
     )
-    variant = ProductVariant.objects.create(product=product, sku="firstvar")
+    variant = ProductVariant.objects.create(
+        product=product, sku="firstvar", price_amount=Decimal(10)
+    )
     product2 = Product.objects.create(
         name="Second product",
         slug="second-product",
-        price=Money(15, "USD"),
         description="",
         product_type=product_type,
         category=category,
     )
-    sec_variant = ProductVariant.objects.create(product=product2, sku="secvar", pk=111)
+    sec_variant = ProductVariant.objects.create(
+        product=product2, sku="secvar", pk=111, price_amount=Decimal(10)
+    )
     sale = Sale(name="Test sale", value=3, type=DiscountValueType.FIXED)
     discount = DiscountInfo(
         sale=sale, product_ids={product.id}, category_ids=set(), collection_ids=set()
     )
     product_discount = get_product_discount_on_sale(variant.product, set(), discount)
-    discounted_price = product_discount(product.price)
+    discounted_price = product_discount(variant.price)
     assert discounted_price == Money(7, "USD")
     with pytest.raises(NotApplicable):
         get_product_discount_on_sale(sec_variant.product, set(), discount)

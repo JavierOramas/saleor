@@ -3,7 +3,7 @@ from typing import List, Pattern, Union
 
 from django.utils.functional import SimpleLazyObject
 
-from saleor.settings import *  # noqa
+from ..settings import *  # noqa
 
 
 def lazy_re_compile(regex, flags=0):
@@ -53,3 +53,5 @@ PATTERNS_IGNORED_IN_QUERY_CAPTURES: List[Union[Pattern, SimpleLazyObject]] = [
 ]
 
 INSTALLED_APPS.append("saleor.tests")  # noqa: F405
+
+JWT_EXPIRE = True

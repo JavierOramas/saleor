@@ -15,12 +15,13 @@ from ....order.actions import (
     order_voided,
 )
 from ....order.error_codes import OrderErrorCode
-from ....order.utils import get_valid_shipping_methods_for_order
-from ....payment import CustomPaymentChoices, PaymentError, gateway
+from ....order.utils import get_valid_shipping_methods_for_order, update_order_prices
+from ....payment import CustomPaymentChoices, PaymentError, TransactionKind, gateway
 from ...account.types import AddressInput
 from ...core.mutations import BaseMutation
-from ...core.scalars import UUID, Decimal
+from ...core.scalars import UUID, PositiveDecimal
 from ...core.types.common import OrderError
+from ...core.utils import validate_required_string_field
 from ...meta.deprecated.mutations import ClearMetaBaseMutation, UpdateMetaBaseMutation
 from ...meta.deprecated.types import MetaInput, MetaPath
 from ...order.mutations.draft_orders import DraftOrderUpdate
@@ -120,7 +121,7 @@ def clean_refund_payment(payment):
 
 def try_payment_action(order, user, payment, func, *args, **kwargs):
     try:
-        func(*args, **kwargs)
+        return func(*args, **kwargs)
     except (PaymentError, ValueError) as e:
         message = str(e)
         events.payment_failed_event(
@@ -129,7 +130,6 @@ def try_payment_action(order, user, payment, func, *args, **kwargs):
         raise ValidationError(
             {"payment": ValidationError(message, code=OrderErrorCode.PAYMENT_ERROR)}
         )
-    return True
 
 
 class OrderUpdateInput(graphene.InputObjectType):
@@ -249,6 +249,7 @@ class OrderUpdateShipping(BaseMutation):
                 "shipping_price_gross_amount",
             ]
         )
+        update_order_prices(order, info.context.discounts)
         # Post-process the results
         order_shipping_updated(order)
         return OrderUpdateShipping(order=order)
@@ -282,8 +283,9 @@ class OrderAddNote(BaseMutation):
 
     @classmethod
     def clean_input(cls, _info, _instance, data):
-        message = data["input"]["message"].strip()
-        if not message:
+        try:
+            cleaned_input = validate_required_string_field(data["input"], "message")
+        except ValidationError:
             raise ValidationError(
                 {
                     "message": ValidationError(
@@ -291,17 +293,14 @@ class OrderAddNote(BaseMutation):
                     )
                 }
             )
-        data["input"]["message"] = message
-        return data
+        return cleaned_input
 
     @classmethod
     def perform_mutation(cls, _root, info, **data):
         order = cls.get_node_or_error(info, data.get("id"), only_type=Order)
         cleaned_input = cls.clean_input(info, order, data)
         event = events.order_note_added_event(
-            order=order,
-            user=info.context.user,
-            message=cleaned_input["input"]["message"],
+            order=order, user=info.context.user, message=cleaned_input["message"],
         )
         return OrderAddNote(order=order, event=event)
 
@@ -364,7 +363,9 @@ class OrderCapture(BaseMutation):
 
     class Arguments:
         id = graphene.ID(required=True, description="ID of the order to capture.")
-        amount = Decimal(required=True, description="Amount of money to capture.")
+        amount = PositiveDecimal(
+            required=True, description="Amount of money to capture."
+        )
 
     class Meta:
         description = "Capture an order."
@@ -388,11 +389,13 @@ class OrderCapture(BaseMutation):
         payment = order.get_last_payment()
         clean_order_capture(payment)
 
-        try_payment_action(
+        transaction = try_payment_action(
             order, info.context.user, payment, gateway.capture, payment, amount
         )
-
-        order_captured(order, info.context.user, amount, payment)
+        # Confirm that we changed the status to capture. Some payment can receive
+        # asynchronous webhook with update status
+        if transaction.kind == TransactionKind.CAPTURE:
+            order_captured(order, info.context.user, amount, payment)
         return OrderCapture(order=order)
 
 
@@ -414,8 +417,13 @@ class OrderVoid(BaseMutation):
         payment = order.get_last_payment()
         clean_void_payment(payment)
 
-        try_payment_action(order, info.context.user, payment, gateway.void, payment)
-        order_voided(order, info.context.user, payment)
+        transaction = try_payment_action(
+            order, info.context.user, payment, gateway.void, payment
+        )
+        # Confirm that we changed the status to void. Some payment can receive
+        # asynchronous webhook with update status
+        if transaction.kind == TransactionKind.VOID:
+            order_voided(order, info.context.user, payment)
         return OrderVoid(order=order)
 
 
@@ -424,7 +432,9 @@ class OrderRefund(BaseMutation):
 
     class Arguments:
         id = graphene.ID(required=True, description="ID of the order to refund.")
-        amount = Decimal(required=True, description="Amount of money to refund.")
+        amount = PositiveDecimal(
+            required=True, description="Amount of money to refund."
+        )
 
     class Meta:
         description = "Refund an order."
@@ -448,11 +458,14 @@ class OrderRefund(BaseMutation):
         payment = order.get_last_payment()
         clean_refund_payment(payment)
 
-        try_payment_action(
+        transaction = try_payment_action(
             order, info.context.user, payment, gateway.refund, payment, amount
         )
 
-        order_refunded(order, info.context.user, amount, payment)
+        # Confirm that we changed the status to refund. Some payment can receive
+        # asynchronous webhook with update status
+        if transaction.kind == TransactionKind.REFUND:
+            order_refunded(order, info.context.user, amount, payment)
         return OrderRefund(order=order)
 
 

@@ -3,13 +3,13 @@ from unittest.mock import Mock, patch
 
 import graphene
 import pytest
-from django.template.defaultfilters import slugify
+from django.utils.text import slugify
 from graphql_relay import to_global_id
 
-from saleor.graphql.tests.utils import get_graphql_content, get_multipart_request_body
-from saleor.product.error_codes import ProductErrorCode
-from saleor.product.models import Category
-from saleor.product.tests.utils import create_image, create_pdf_file_with_image_ext
+from ....product.error_codes import ProductErrorCode
+from ....product.models import Category, Product
+from ....product.tests.utils import create_image, create_pdf_file_with_image_ext
+from ...tests.utils import get_graphql_content, get_multipart_request_body
 
 QUERY_CATEGORY = """
     query ($id: ID, $slug: String){
@@ -30,6 +30,13 @@ QUERY_CATEGORY = """
                 edges {
                     node {
                         name
+                    }
+                }
+            }
+            products(first: 10) {
+                edges {
+                    node {
+                        id
                     }
                 }
             }
@@ -95,10 +102,126 @@ def test_category_query_error_when_no_param(
     assert len(content["errors"]) == 1
 
 
-def test_category_create_mutation(
-    monkeypatch, staff_api_client, permission_manage_products, media_root
+def test_query_category_product_only_visible_in_listings_as_customer(
+    user_api_client, product_list
 ):
-    query = """
+    # given
+    category = Category.objects.first()
+
+    product_list[0].visible_in_listings = False
+    product_list[0].save(update_fields=["visible_in_listings"])
+
+    product_count = Product.objects.count()
+
+    variables = {
+        "id": graphene.Node.to_global_id("Category", category.pk),
+    }
+
+    # when
+    response = user_api_client.post_graphql(QUERY_CATEGORY, variables=variables)
+
+    # then
+    content = get_graphql_content(response, ignore_errors=True)
+    assert len(content["data"]["category"]["products"]["edges"]) == product_count - 1
+
+
+def test_query_category_product_only_visible_in_listings_as_staff_without_perm(
+    staff_api_client, product_list
+):
+    # given
+    category = Category.objects.first()
+
+    product_list[0].visible_in_listings = False
+    product_list[0].save(update_fields=["visible_in_listings"])
+
+    product_count = Product.objects.count()
+
+    variables = {
+        "id": graphene.Node.to_global_id("Category", category.pk),
+    }
+
+    # when
+    response = staff_api_client.post_graphql(QUERY_CATEGORY, variables=variables)
+
+    # then
+    content = get_graphql_content(response, ignore_errors=True)
+    assert len(content["data"]["category"]["products"]["edges"]) == product_count - 1
+
+
+def test_query_category_product_only_visible_in_listings_as_staff_with_perm(
+    staff_api_client, product_list, permission_manage_products
+):
+    # given
+    staff_api_client.user.user_permissions.add(permission_manage_products)
+
+    category = Category.objects.first()
+
+    product_list[0].visible_in_listings = False
+    product_list[0].save(update_fields=["visible_in_listings"])
+
+    product_count = Product.objects.count()
+
+    variables = {
+        "id": graphene.Node.to_global_id("Category", category.pk),
+    }
+
+    # when
+    response = staff_api_client.post_graphql(QUERY_CATEGORY, variables=variables)
+
+    # then
+    content = get_graphql_content(response, ignore_errors=True)
+    assert len(content["data"]["category"]["products"]["edges"]) == product_count
+
+
+def test_query_category_product_only_visible_in_listings_as_app_without_perm(
+    app_api_client, product_list
+):
+    # given
+    category = Category.objects.first()
+
+    product_list[0].visible_in_listings = False
+    product_list[0].save(update_fields=["visible_in_listings"])
+
+    product_count = Product.objects.count()
+
+    variables = {
+        "id": graphene.Node.to_global_id("Category", category.pk),
+    }
+
+    # when
+    response = app_api_client.post_graphql(QUERY_CATEGORY, variables=variables)
+
+    # then
+    content = get_graphql_content(response, ignore_errors=True)
+    assert len(content["data"]["category"]["products"]["edges"]) == product_count - 1
+
+
+def test_query_category_product_only_visible_in_listings_as_app_with_perm(
+    app_api_client, product_list, permission_manage_products
+):
+    # given
+    app_api_client.app.permissions.add(permission_manage_products)
+
+    category = Category.objects.first()
+
+    product_list[0].visible_in_listings = False
+    product_list[0].save(update_fields=["visible_in_listings"])
+
+    product_count = Product.objects.count()
+
+    variables = {
+        "id": graphene.Node.to_global_id("Category", category.pk),
+    }
+
+    # when
+    response = app_api_client.post_graphql(QUERY_CATEGORY, variables=variables)
+
+    # then
+    content = get_graphql_content(response, ignore_errors=True)
+    assert len(content["data"]["category"]["products"]["edges"]) == product_count
+
+
+CATEGORY_CREATE_MUTATION = """
         mutation(
                 $name: String, $slug: String, $description: String,
                 $descriptionJson: JSONString, $backgroundImage: Upload,
@@ -128,13 +251,20 @@ def test_category_create_mutation(
                         alt
                     }
                 }
-                errors {
+                productErrors {
                     field
+                    code
                     message
                 }
             }
         }
     """
+
+
+def test_category_create_mutation(
+    monkeypatch, staff_api_client, permission_manage_products, media_root
+):
+    query = CATEGORY_CREATE_MUTATION
 
     mock_create_thumbnails = Mock(return_value=None)
     monkeypatch.setattr(
@@ -167,7 +297,7 @@ def test_category_create_mutation(
     )
     content = get_graphql_content(response)
     data = content["data"]["categoryCreate"]
-    assert data["errors"] == []
+    assert data["productErrors"] == []
     assert data["category"]["name"] == category_name
     assert data["category"]["description"] == category_description
     assert data["category"]["descriptionJson"] == category_description_json
@@ -188,39 +318,23 @@ def test_category_create_mutation(
     response = staff_api_client.post_graphql(query, variables)
     content = get_graphql_content(response)
     data = content["data"]["categoryCreate"]
-    assert data["errors"] == []
+    assert data["productErrors"] == []
     assert data["category"]["parent"]["id"] == parent_id
 
 
 @pytest.mark.parametrize(
     "input_slug, expected_slug",
-    (("test-slug", "test-slug"), (None, "test-category"), ("", "test-category"),),
+    (
+        ("test-slug", "test-slug"),
+        (None, "test-category"),
+        ("", "test-category"),
+        ("わたし-わ-にっぽん-です", "わたし-わ-にっぽん-です"),
+    ),
 )
 def test_create_category_with_given_slug(
     staff_api_client, permission_manage_products, input_slug, expected_slug
 ):
-    query = """
-        mutation(
-                $name: String, $slug: String) {
-            categoryCreate(
-                input: {
-                    name: $name
-                    slug: $slug
-                }
-            ) {
-                category {
-                    id
-                    name
-                    slug
-                }
-                productErrors {
-                    field
-                    message
-                    code
-                }
-            }
-        }
-    """
+    query = CATEGORY_CREATE_MUTATION
     name = "Test category"
     variables = {"name": name, "slug": input_slug}
     response = staff_api_client.post_graphql(
@@ -232,27 +346,26 @@ def test_create_category_with_given_slug(
     assert data["category"]["slug"] == expected_slug
 
 
+def test_create_category_name_with_unicode(
+    staff_api_client, permission_manage_products
+):
+    query = CATEGORY_CREATE_MUTATION
+    name = "わたし-わ にっぽん です"
+    variables = {"name": name}
+    response = staff_api_client.post_graphql(
+        query, variables, permissions=[permission_manage_products]
+    )
+    content = get_graphql_content(response)
+    data = content["data"]["categoryCreate"]
+    assert not data["productErrors"]
+    assert data["category"]["name"] == name
+    assert data["category"]["slug"] == "わたし-わ-にっぽん-です"
+
+
 def test_category_create_mutation_without_background_image(
     monkeypatch, staff_api_client, permission_manage_products
 ):
-    query = """
-        mutation($name: String, $slug: String, $description: String, $parentId: ID) {
-            categoryCreate(
-                input: {
-                    name: $name
-                    slug: $slug
-                    description: $description
-                },
-                parent: $parentId
-            ) {
-                productErrors {
-                    field
-                    message
-                    code
-                }
-            }
-        }
-    """
+    query = CATEGORY_CREATE_MUTATION
 
     mock_create_thumbnails = Mock(return_value=None)
     monkeypatch.setattr(

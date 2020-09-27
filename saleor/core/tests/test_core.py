@@ -8,13 +8,17 @@ from django.core.management import CommandError, call_command
 from django.db.utils import DataError
 from django.templatetags.static import static
 from django.test import RequestFactory, override_settings
-from measurement.measures import Weight
 
-from saleor.account.models import Address, User
-from saleor.account.utils import create_superuser
-from saleor.core.storages import S3MediaStorage
-from saleor.core.templatetags.placeholder import placeholder
-from saleor.core.utils import (
+from ...account.models import Address, User
+from ...account.utils import create_superuser
+from ...discount.models import Sale, Voucher
+from ...giftcard.models import GiftCard
+from ...order.models import Order
+from ...product.models import ProductImage, ProductType
+from ...shipping.models import ShippingZone
+from ..storages import S3MediaStorage
+from ..templatetags.placeholder import placeholder
+from ..utils import (
     Country,
     build_absolute_uri,
     create_thumbnails,
@@ -24,12 +28,6 @@ from saleor.core.utils import (
     get_currency_for_country,
     random_data,
 )
-from saleor.core.weight import WeightUnits, convert_weight
-from saleor.discount.models import Sale, Voucher
-from saleor.giftcard.models import GiftCard
-from saleor.order.models import Order
-from saleor.product.models import ProductImage, ProductType
-from saleor.shipping.models import ShippingZone
 
 type_schema = {
     "Vegetable": {
@@ -56,7 +54,9 @@ type_schema = {
     ],
 )
 def test_get_country_by_ip(ip_data, expected_country, monkeypatch):
-    monkeypatch.setattr("saleor.core.utils.georeader.get", Mock(return_value=ip_data))
+    monkeypatch.setattr(
+        "saleor.core.utils._get_geo_data_by_ip", Mock(return_value=ip_data)
+    )
     country = get_country_by_ip("127.0.0.1")
     assert country == expected_country
 
@@ -219,12 +219,6 @@ def test_storages_not_setting_s3_bucket_domain(storage, settings):
     assert storage.custom_domain is None
 
 
-def test_convert_weight():
-    weight = Weight(kg=1)
-    expected_result = Weight(g=1000)
-    assert convert_weight(weight, WeightUnits.GRAM) == expected_result
-
-
 def test_build_absolute_uri(site_settings, settings):
     # Case when we are using external service for storing static files,
     # eg. Amazon s3
@@ -264,6 +258,8 @@ def test_placeholder(settings):
         ("Shirt", "shirt"),
         ("40.5", "405-2"),
         ("FM1+", "fm1-2"),
+        ("زيوت", "زيوت"),
+        ("わたし-わ にっぽん です", "わたし-わ-にっぽん-です-2"),
     ],
 )
 def test_generate_unique_slug_with_slugable_field(
@@ -275,6 +271,7 @@ def test_generate_unique_slug_with_slugable_field(
         ("Paint test", "paint-2"),
         ("405", "405"),
         ("FM1", "fm1"),
+        ("わたし わ にっぽん です", "わたし-わ-にっぽん-です"),
     ]
     for name, slug in product_names_and_slugs:
         ProductType.objects.create(name=name, slug=slug)

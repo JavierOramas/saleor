@@ -1,18 +1,17 @@
 from decimal import Decimal
 from typing import TYPE_CHECKING, Union
 
+from django.core.handlers.wsgi import WSGIRequest
+from django.http import HttpResponse, HttpResponseNotFound, JsonResponse
 from django_countries.fields import Country
 from prices import Money, TaxedMoney
 
-from saleor.core.taxes import TaxType
-from saleor.plugins.base_plugin import BasePlugin, ConfigurationTypeField
-from saleor.plugins.models import PluginConfiguration
-from saleor.product.models import Product, ProductType
+from ...core.taxes import TaxType
+from ..base_plugin import BasePlugin, ConfigurationTypeField
 
 if TYPE_CHECKING:
     # flake8: noqa
-    from saleor.product.models import Product, ProductType
-    from django.db.models import QuerySet
+    from ...product.models import Product, ProductType
 
 
 class PluginSample(BasePlugin):
@@ -49,6 +48,13 @@ class PluginSample(BasePlugin):
             "label": "Private key",
         },
     }
+
+    def webhook(self, request: WSGIRequest, path: str, previous_value) -> HttpResponse:
+        if path == "/webhook/paid":
+            return JsonResponse(data={"received": True, "paid": True})
+        if path == "/webhook/failed":
+            return JsonResponse(data={"received": True, "paid": False})
+        return HttpResponseNotFound()
 
     def calculate_checkout_total(self, checkout, lines, discounts, previous_value):
         total = Money("1.0", currency=checkout.currency)
@@ -112,12 +118,37 @@ class ActivePlugin(BasePlugin):
 
 class ActivePaymentGateway(BasePlugin):
     PLUGIN_ID = "gateway.active"
-    CLIENT_CONFIG = [{"field": "foo", "value": "bar"}]
+    CLIENT_CONFIG = [
+        {"field": "foo", "value": "bar"},
+    ]
     PLUGIN_NAME = "braintree"
     DEFAULT_ACTIVE = True
+    SUPPORTED_CURRENCIES = ["USD"]
 
     def process_payment(self, payment_information, previous_value):
         pass
+
+    def get_supported_currencies(self, previous_value):
+        return self.SUPPORTED_CURRENCIES
+
+    def get_payment_config(self, previous_value):
+        return self.CLIENT_CONFIG
+
+
+class ActiveDummyPaymentGateway(BasePlugin):
+    PLUGIN_ID = "sampleDummy.active"
+    CLIENT_CONFIG = [
+        {"field": "foo", "value": "bar"},
+    ]
+    PLUGIN_NAME = "SampleDummy"
+    DEFAULT_ACTIVE = True
+    SUPPORTED_CURRENCIES = ["PLN", "USD"]
+
+    def process_payment(self, payment_information, previous_value):
+        pass
+
+    def get_supported_currencies(self, previous_value):
+        return self.SUPPORTED_CURRENCIES
 
     def get_payment_config(self, previous_value):
         return self.CLIENT_CONFIG

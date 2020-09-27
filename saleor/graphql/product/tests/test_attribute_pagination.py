@@ -1,15 +1,14 @@
 import graphene
 import pytest
-from prices import Money
 
-from saleor.graphql.tests.utils import get_graphql_content
-from saleor.product.models import (
+from ....product.models import (
     Attribute,
     AttributeProduct,
     AttributeVariant,
     Product,
     ProductType,
 )
+from ...tests.utils import get_graphql_content
 
 
 @pytest.fixture
@@ -53,8 +52,8 @@ def attributes_for_pagination(collection, category):
     product = Product.objects.create(
         name="Test product",
         product_type=product_type,
-        price=Money("10.00", "USD"),
         category=category,
+        visible_in_listings=True,
     )
     collection.products.add(product)
     AttributeVariant.objects.bulk_create(

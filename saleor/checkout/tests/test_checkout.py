@@ -3,40 +3,34 @@ from unittest.mock import Mock, patch
 
 import pytest
 import pytz
-from django.contrib.auth.models import AnonymousUser
 from django.utils import timezone
 from django_countries.fields import Country
 from freezegun import freeze_time
 from prices import Money, TaxedMoney
 
-from saleor.account import CustomerEvents
-from saleor.account.models import Address, CustomerEvent, User
-from saleor.account.utils import store_user_address
-from saleor.checkout import AddressType, calculations
-from saleor.checkout.models import Checkout
-from saleor.checkout.utils import (
-    add_variant_to_checkout,
+from ...account.models import Address, User
+from ...account.utils import store_user_address
+from ...core.taxes import zero_money
+from ...discount import DiscountValueType, VoucherType
+from ...discount.models import NotApplicable, Voucher
+from ...payment.models import Payment
+from ...plugins.manager import get_plugins_manager
+from ...shipping.models import ShippingZone
+from .. import AddressType, calculations
+from ..models import Checkout
+from ..utils import (
     add_voucher_to_checkout,
+    cancel_active_payments,
     change_billing_address_in_checkout,
     change_shipping_address_in_checkout,
     clear_shipping_method,
-    create_order,
     get_voucher_discount_for_checkout,
     get_voucher_for_checkout,
+    is_fully_paid,
     is_valid_shipping_method,
-    prepare_order_data,
     recalculate_checkout_discount,
     remove_voucher_from_checkout,
 )
-from saleor.core.exceptions import InsufficientStock
-from saleor.core.taxes import zero_money, zero_taxed_money
-from saleor.discount import DiscountValueType, VoucherType
-from saleor.discount.models import NotApplicable, Voucher
-from saleor.order import OrderEvents, OrderEventsEmails
-from saleor.order.models import OrderEvent
-from saleor.plugins.manager import get_plugins_manager
-from saleor.shipping.models import ShippingZone
-from saleor.tests.utils import flush_post_commit_hooks
 
 
 def test_is_valid_shipping_method(checkout_with_item, address, shipping_zone):
@@ -84,271 +78,6 @@ def test_last_change_update_foregin_key(checkout, shipping_method):
         checkout.save(update_fields=["shipping_method", "last_change"])
 
         assert checkout.last_change == pytz.utc.localize(frozen_datetime())
-
-
-@pytest.mark.parametrize("is_anonymous_user", (True, False))
-def test_create_order_creates_expected_events(
-    request_checkout_with_item, customer_user, shipping_method, is_anonymous_user
-):
-    checkout = request_checkout_with_item
-    checkout_user = None if is_anonymous_user else customer_user
-
-    # Ensure not events are existing prior
-    assert not OrderEvent.objects.exists()
-    assert not CustomerEvent.objects.exists()
-
-    # Prepare valid checkout
-    checkout.user = checkout_user
-    checkout.billing_address = customer_user.default_billing_address
-    checkout.shipping_address = customer_user.default_shipping_address
-    checkout.shipping_method = shipping_method
-    checkout.save()
-
-    # Place checkout
-    order = create_order(
-        checkout=checkout,
-        order_data=prepare_order_data(
-            checkout=checkout,
-            lines=list(checkout),
-            tracking_code="tracking_code",
-            discounts=None,
-        ),
-        user=customer_user if not is_anonymous_user else AnonymousUser(),
-        redirect_url="https://www.example.com",
-    )
-    flush_post_commit_hooks()
-
-    # Ensure only two events were created, and retrieve them
-    placement_event, email_sent_event = order.events.all()  # type: OrderEvent
-
-    # Ensure the correct order event was created
-    assert placement_event.type == OrderEvents.PLACED  # is the event the expected type
-    assert placement_event.user == checkout_user  # is the user anonymous/ the customer
-    assert placement_event.order is order  # is the associated backref order valid
-    assert placement_event.date  # ensure a date was set
-    assert not placement_event.parameters  # should not have any additional parameters
-
-    # Ensure the correct email sent event was created
-    assert email_sent_event.type == OrderEvents.EMAIL_SENT  # should be email sent event
-    assert email_sent_event.user == checkout_user  # ensure the user is none or valid
-    assert email_sent_event.order is order  # ensure the mail event is related to order
-    assert email_sent_event.date  # ensure a date was set
-    assert email_sent_event.parameters == {  # ensure the correct parameters were set
-        "email": order.get_customer_email(),
-        "email_type": OrderEventsEmails.ORDER,
-    }
-
-    # Check no event was created if the user was anonymous
-    if is_anonymous_user:
-        assert not CustomerEvent.objects.exists()  # should not have created any event
-        return  # we are done testing as the user is anonymous
-
-    # Ensure the correct customer event was created if the user was not anonymous
-    placement_event = customer_user.events.get()  # type: CustomerEvent
-    assert placement_event.type == CustomerEvents.PLACED_ORDER  # check the event type
-    assert placement_event.user == customer_user  # check the backref is valid
-    assert placement_event.order == order  # check the associated order is valid
-    assert placement_event.date  # ensure a date was set
-    assert not placement_event.parameters  # should not have any additional parameters
-
-    # mock_send_staff_order_confirmation.assert_called_once_with(order.pk)
-
-
-def test_create_order_insufficient_stock(
-    request_checkout, customer_user, product_without_shipping
-):
-    variant = product_without_shipping.variants.get()
-    add_variant_to_checkout(request_checkout, variant, 10, check_quantity=False)
-    request_checkout.user = customer_user
-    request_checkout.billing_address = customer_user.default_billing_address
-    request_checkout.shipping_address = customer_user.default_billing_address
-    request_checkout.save()
-
-    with pytest.raises(InsufficientStock):
-        prepare_order_data(
-            checkout=request_checkout,
-            lines=list(request_checkout),
-            tracking_code="tracking_code",
-            discounts=None,
-        )
-
-
-def test_create_order_doesnt_duplicate_order(
-    checkout_with_item, customer_user, shipping_method
-):
-    checkout = checkout_with_item
-    checkout.user = customer_user
-    checkout.billing_address = customer_user.default_billing_address
-    checkout.shipping_address = customer_user.default_billing_address
-    checkout.shipping_method = shipping_method
-    checkout.save()
-
-    order_data = prepare_order_data(
-        checkout=checkout, lines=list(checkout), tracking_code="", discounts=None
-    )
-
-    order_1 = create_order(
-        checkout=checkout,
-        order_data=order_data,
-        user=customer_user,
-        redirect_url="https://www.example.com",
-    )
-    assert order_1.checkout_token == checkout.token
-
-    order_2 = create_order(
-        checkout=checkout,
-        order_data=order_data,
-        user=customer_user,
-        redirect_url="https://www.example.com",
-    )
-    assert order_1.pk == order_2.pk
-
-
-@pytest.mark.parametrize("is_anonymous_user", (True, False))
-def test_create_order_with_gift_card(
-    checkout_with_gift_card, customer_user, shipping_method, is_anonymous_user
-):
-    checkout_user = None if is_anonymous_user else customer_user
-    checkout = checkout_with_gift_card
-    checkout.user = checkout_user
-    checkout.billing_address = customer_user.default_billing_address
-    checkout.shipping_address = customer_user.default_billing_address
-    checkout.shipping_method = shipping_method
-    checkout.save()
-
-    lines = list(checkout)
-    subtotal = calculations.checkout_subtotal(checkout=checkout, lines=lines)
-    shipping_price = calculations.checkout_shipping_price(
-        checkout=checkout, lines=lines
-    )
-    total_gross_without_gift_cards = (
-        subtotal.gross + shipping_price.gross - checkout.discount
-    )
-    gift_cards_balance = checkout.get_total_gift_cards_balance()
-
-    order = create_order(
-        checkout=checkout,
-        order_data=prepare_order_data(
-            checkout=checkout,
-            lines=lines,
-            tracking_code="tracking_code",
-            discounts=None,
-        ),
-        user=customer_user if not is_anonymous_user else AnonymousUser(),
-        redirect_url="https://www.example.com",
-    )
-
-    assert order.gift_cards.count() == 1
-    assert order.gift_cards.first().current_balance.amount == 0
-    assert order.total.gross == (total_gross_without_gift_cards - gift_cards_balance)
-
-
-def test_create_order_with_gift_card_partial_use(
-    checkout_with_item, gift_card_used, customer_user, shipping_method
-):
-    checkout = checkout_with_item
-    checkout.user = customer_user
-    checkout.billing_address = customer_user.default_billing_address
-    checkout.shipping_address = customer_user.default_billing_address
-    checkout.shipping_method = shipping_method
-    checkout.save()
-
-    price_without_gift_card = calculations.checkout_total(
-        checkout=checkout, lines=list(checkout)
-    )
-    gift_card_balance_before_order = gift_card_used.current_balance_amount
-
-    checkout.gift_cards.add(gift_card_used)
-    checkout.save()
-
-    order = create_order(
-        checkout=checkout,
-        order_data=prepare_order_data(
-            checkout=checkout,
-            lines=list(checkout),
-            tracking_code="tracking_code",
-            discounts=None,
-        ),
-        user=customer_user,
-        redirect_url="https://www.example.com",
-    )
-
-    gift_card_used.refresh_from_db()
-
-    expected_old_balance = (
-        price_without_gift_card.gross.amount + gift_card_used.current_balance_amount
-    )
-
-    assert order.gift_cards.count() > 0
-    assert order.total == zero_taxed_money()
-    assert gift_card_balance_before_order == expected_old_balance
-
-
-def test_create_order_with_many_gift_cards(
-    checkout_with_item,
-    gift_card_created_by_staff,
-    gift_card,
-    customer_user,
-    shipping_method,
-):
-    checkout = checkout_with_item
-    checkout.user = customer_user
-    checkout.billing_address = customer_user.default_billing_address
-    checkout.shipping_address = customer_user.default_billing_address
-    checkout.shipping_method = shipping_method
-    checkout.save()
-
-    price_without_gift_card = calculations.checkout_total(
-        checkout=checkout, lines=list(checkout)
-    )
-    gift_cards_balance_before_order = (
-        gift_card_created_by_staff.current_balance.amount
-        + gift_card.current_balance.amount
-    )
-
-    checkout.gift_cards.add(gift_card_created_by_staff)
-    checkout.gift_cards.add(gift_card)
-    checkout.save()
-
-    order = create_order(
-        checkout=checkout,
-        order_data=prepare_order_data(
-            checkout=checkout,
-            lines=list(checkout),
-            tracking_code="tracking_code",
-            discounts=None,
-        ),
-        user=customer_user,
-        redirect_url="https://www.example.com",
-    )
-
-    gift_card_created_by_staff.refresh_from_db()
-    gift_card.refresh_from_db()
-    zero_price = zero_money()
-    assert order.gift_cards.count() > 0
-    assert gift_card_created_by_staff.current_balance == zero_price
-    assert gift_card.current_balance == zero_price
-    assert price_without_gift_card.gross.amount == (
-        gift_cards_balance_before_order + order.total.gross.amount
-    )
-
-
-def test_note_in_created_order(request_checkout_with_item, address, customer_user):
-    request_checkout_with_item.shipping_address = address
-    request_checkout_with_item.note = "test_note"
-    request_checkout_with_item.save()
-    order = create_order(
-        checkout=request_checkout_with_item,
-        order_data=prepare_order_data(
-            checkout=request_checkout_with_item,
-            lines=list(request_checkout_with_item),
-            tracking_code="tracking_code",
-            discounts=None,
-        ),
-        user=customer_user,
-        redirect_url="https://www.example.com",
-    )
-    assert order.customer_note == request_checkout_with_item.note
 
 
 @pytest.mark.parametrize(
@@ -1054,3 +783,87 @@ def test_store_user_address_create_new_address_if_not_associated(address):
 
     assert user.addresses.count() == expected_user_addresses_count
     assert user.default_billing_address_id != address.pk
+
+
+def test_get_last_active_payment(checkout_with_payments):
+    # given
+    payment = Payment.objects.create(
+        gateway="mirumee.payments.dummy",
+        is_active=True,
+        checkout=checkout_with_payments,
+    )
+
+    # when
+    last_payment = checkout_with_payments.get_last_active_payment()
+
+    # then
+    assert last_payment.pk == payment.pk
+
+
+def test_is_fully_paid(checkout_with_item, payment_dummy):
+    checkout = checkout_with_item
+    total = calculations.checkout_total(checkout=checkout, lines=list(checkout))
+    payment = payment_dummy
+    payment.is_active = True
+    payment.order = None
+    payment.total = total.gross.amount
+    payment.currency = total.gross.currency
+    payment.checkout = checkout
+    payment.save()
+    is_paid = is_fully_paid(checkout, list(checkout), None)
+    assert is_paid
+
+
+def test_is_fully_paid_many_payments(checkout_with_item, payment_dummy):
+    checkout = checkout_with_item
+    total = calculations.checkout_total(checkout=checkout, lines=list(checkout))
+    payment = payment_dummy
+    payment.is_active = True
+    payment.order = None
+    payment.total = total.gross.amount - 1
+    payment.currency = total.gross.currency
+    payment.checkout = checkout
+    payment.save()
+    payment2 = payment_dummy
+    payment2.pk = None
+    payment2.is_active = True
+    payment2.order = None
+    payment2.total = 1
+    payment2.currency = total.gross.currency
+    payment2.checkout = checkout
+    payment2.save()
+    is_paid = is_fully_paid(checkout, list(checkout), None)
+    assert is_paid
+
+
+def test_is_fully_paid_partially_paid(checkout_with_item, payment_dummy):
+    checkout = checkout_with_item
+    total = calculations.checkout_total(checkout=checkout, lines=list(checkout))
+    payment = payment_dummy
+    payment.is_active = True
+    payment.order = None
+    payment.total = total.gross.amount - 1
+    payment.currency = total.gross.currency
+    payment.checkout = checkout
+    payment.save()
+    is_paid = is_fully_paid(checkout, list(checkout), None)
+    assert not is_paid
+
+
+def test_is_fully_paid_no_payment(checkout_with_item):
+    checkout = checkout_with_item
+    is_paid = is_fully_paid(checkout, list(checkout), None)
+    assert not is_paid
+
+
+def test_cancel_active_payments(checkout_with_payments):
+    # given
+    checkout = checkout_with_payments
+    count_active = checkout.payments.filter(is_active=True).count()
+    assert count_active != 0
+
+    # when
+    cancel_active_payments(checkout)
+
+    # then
+    assert checkout.payments.filter(is_active=True).count() == 0

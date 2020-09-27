@@ -1,6 +1,6 @@
 import logging
 from decimal import Decimal
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from django.db import transaction
 
@@ -10,7 +10,12 @@ from ..payment import ChargeStatus, CustomPaymentChoices, PaymentError
 from ..plugins.manager import get_plugins_manager
 from ..warehouse.management import deallocate_stock_for_order, decrease_stock
 from . import FulfillmentStatus, OrderStatus, emails, events, utils
-from .emails import send_fulfillment_confirmation_to_customer, send_payment_confirmation
+from .emails import (
+    send_fulfillment_confirmation_to_customer,
+    send_order_canceled_confirmation,
+    send_order_refunded_confirmation,
+    send_payment_confirmation,
+)
 from .models import Fulfillment, FulfillmentLine
 from .utils import (
     order_line_needs_automatic_fulfillment,
@@ -33,14 +38,24 @@ def order_created(order: "Order", user: "User", from_draft: bool = False):
     events.order_created_event(order=order, user=user, from_draft=from_draft)
     manager = get_plugins_manager()
     manager.order_created(order)
+    payment = order.get_last_payment()
+    if payment:
+        if order.is_captured():
+            order_captured(
+                order=order, user=user, amount=payment.total, payment=payment
+            )
+        elif order.is_pre_authorized():
+            order_authorized(
+                order=order, user=user, amount=payment.total, payment=payment
+            )
 
 
-def handle_fully_paid_order(order: "Order"):
-    events.order_fully_paid_event(order=order)
+def handle_fully_paid_order(order: "Order", user: Optional["User"] = None):
+    events.order_fully_paid_event(order=order, user=user)
 
     if order.get_customer_email():
         events.email_sent_event(
-            order=order, user=None, email_type=events.OrderEventsEmails.PAYMENT
+            order=order, user=user, email_type=events.OrderEventsEmails.PAYMENT
         )
         send_payment_confirmation.delay(order.pk)
 
@@ -57,7 +72,7 @@ def handle_fully_paid_order(order: "Order"):
 
 
 @transaction.atomic
-def cancel_order(order: "Order", user: "User"):
+def cancel_order(order: "Order", user: Optional["User"]):
     """Cancel order.
 
     Release allocation of unfulfilled order items.
@@ -73,12 +88,18 @@ def cancel_order(order: "Order", user: "User"):
     manager.order_cancelled(order)
     manager.order_updated(order)
 
+    send_order_canceled_confirmation(order, user)
 
-def order_refunded(order: "Order", user: "User", amount: "Decimal", payment: "Payment"):
+
+def order_refunded(
+    order: "Order", user: Optional["User"], amount: "Decimal", payment: "Payment"
+):
     events.payment_refunded_event(
         order=order, user=user, amount=amount, payment=payment
     )
     get_plugins_manager().order_updated(order)
+
+    send_order_refunded_confirmation(order, user, amount, payment.currency)
 
 
 def order_voided(order: "Order", user: "User", payment: "Payment"):
@@ -116,11 +137,24 @@ def order_shipping_updated(order: "Order"):
     get_plugins_manager().order_updated(order)
 
 
-def order_captured(order: "Order", user: "User", amount: "Decimal", payment: "Payment"):
+def order_authorized(
+    order: "Order", user: Optional["User"], amount: "Decimal", payment: "Payment"
+):
+    events.payment_authorized_event(
+        order=order, user=user, amount=amount, payment=payment
+    )
+    get_plugins_manager().order_updated(order)
+
+
+def order_captured(
+    order: "Order", user: Optional["User"], amount: "Decimal", payment: "Payment"
+):
     events.payment_captured_event(
         order=order, user=user, amount=amount, payment=payment
     )
     get_plugins_manager().order_updated(order)
+    if order.is_fully_paid():
+        handle_fully_paid_order(order, user)
 
 
 def fulfillment_tracking_updated(

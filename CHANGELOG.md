@@ -4,9 +4,65 @@ All notable, unreleased changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+- Merge `manage_webhooks` permission with `manage_apps` - #5556 by @korycins
+- Add App support - #5767 by @korycins
+- Add webhook handler to BasePlugin and PluginManager - #5884 by @korycins
+- Invoices backend - #5732 by @tomaszszymanski129
+- Support pushing webhook events to message queues - #5940 by @patrys, @korycins
+- Adyen drop-in integration - #5914 by @korycins, @IKarbowiak
+- Add `change_currency` command - #6016 by @maarcingebala
+- Send a confirmation email when the order is canceled or refunded - #6017
+- Add `TotalPrice` to `OrderLine` - #6068 @fowczarek
+- No secure cookie in debug mode - #6082 by @patrys, @orzechdev
+- Add searchable and available for purchase flags to product - #6060 by @IKarbowiak
+- Add `PRODUCT_UPDATED` webhook event - #6100 by @tomaszszymanski129
+- Search orders by graphql PaymentID - #6135 by @korycins
+- Search orders by custom key provided by payment gateway - #6135 by @korycins
+- Default product variant - #6140 by @tomaszszymanski129
+- Allow product variants to be sortable - #6138 by @tomaszszymanski129
+- Staff with only manage_orders should be able to query all stock related date. - #6139 by @fowczarek
+
+### Breaking Changes
+
+- Refactor JWT support - These changes could require a handling JWT token in the storefront. Storefront needs to handle a case when the backend returns the exception about the invalid token. - #5734, #5816 by @korycins
+- New logging setup will now output JSON logs in production mode for ease of feeding them into log collection systems like Logstash or CloudWatch Logs - #5699 by @patrys
+- Deprecate `WebhookEventType.CHECKOUT_QUANTITY_CHANGED`. It will be removed in Saleor 3.0 - #5837 by @korycins
+- Add dummy credit card payment - #5822 by @IKarbowiak
+- Anonymize and update order and payment fields; drop PaymentSecureConfirm mutation, drop Payment type fields: extraData, billingAddress, billingEmail, drop gatewayResponse from Transaction type - #5926 by @IKarbowiak
+- Switch the HTTP stack from WSGI to ASGI based on Uvicorn - #5960 by @patrys
+
+### Fixes
+
+- Fix payment fields in order paylaod for webhooks - #5862 by @korycins
 - Add our implementation of UUID scalar - #5646 by @koradon
-- Add AppTokenVerify mutation -  #5716 by @korycins
+- Add AppTokenVerify mutation - #5716 by @korycins
 - Fix specific product voucher in draft orders - #5727 by @fowczarek
+- Add products csv export - #5255 by @IKarbowiak
+- Explicit country assignment in default shipping zones - #5736 by @maarcingebala
+- Drop `json_content` field from the `Menu` model - #5761 by @maarcingebala
+- Strip warehouse name in mutations - #5766 by @koradon
+- Add missing OrderEvents during checkout flow - #5684 by @koradon
+- Update google merchant to get tax rate based by plugin manager - #5823 by @gabmartinez
+- Allow unicode in slug fields - #5877 by @IKarbowiak
+- Fix empty plugin object result after PluginUpdate mutation - #5968 by @gabmartinez
+- Allow to finish checkout when price amount is 0 - #6064 by @IKarbowiak
+- Fix incorrect tax calculation for Avatax - #6035 by @korycins
+- Fix incorrect calculation of subtotal with active Avatax - #6035 by @korycins
+- Fix incorrect assigment of tax_code for Avatax - #6035 by @korycins
+- Do not allow negative product price - #6091 by @IKarbowiak
+- Handle None as attribute value - #6092 by @IKarbowiak
+- Fix for calling order_created before the order was saved - #6095 by @korycins
+- Update default decimal places - #6098 by @IKarbowiak
+- Avoid assigning the same pictures twice to a variant - #6112 by @IKarbowiak
+- Fix crashing system when avalara is improperly configured - #6117 by @IKarbowiak
+- Fix for failing finalising draft order - #6133 by @korycins
+- Remove corresponding draft order lines when variant is removing - #6119 by @IKarbowiak
+
+## 2.10.2
+
+- Add command to change currencies in the database - #5906 by @d-wysocki
 
 ## 2.10.1
 

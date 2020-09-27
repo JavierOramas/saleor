@@ -1,12 +1,12 @@
+from decimal import Decimal
 from unittest.mock import MagicMock, Mock
 
 import pytest
-from prices import Money
 
-from saleor.product import AttributeInputType
-from saleor.product.models import AttributeValue, Product, ProductType, ProductVariant
-from saleor.product.tasks import _update_variants_names
-from saleor.product.utils.attributes import (
+from .. import AttributeInputType
+from ..models import AttributeValue, Product, ProductType, ProductVariant
+from ..tasks import _update_variants_names
+from ..utils.attributes import (
     associate_attribute_values_to_instance,
     generate_name_for_variant,
 )
@@ -19,12 +19,11 @@ def variant_with_no_attributes(category):
         name="Test product type", has_variants=True, is_shipping_required=True
     )
     product = Product.objects.create(
-        name="Test product",
-        price=Money(10, "USD"),
-        product_type=product_type,
-        category=category,
+        name="Test product", product_type=product_type, category=category,
     )
-    variant = ProductVariant.objects.create(product=product, sku="123")
+    variant = ProductVariant.objects.create(
+        product=product, sku="123", price_amount=Decimal(10)
+    )
     return variant
 
 

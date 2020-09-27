@@ -4,7 +4,7 @@ import graphene
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import transaction
 from django.db.models import Q
-from django.template.defaultfilters import slugify
+from django.utils.text import slugify
 
 from ....core.permissions import ProductPermissions
 from ....product import AttributeInputType, models
@@ -21,6 +21,7 @@ from ...product.types import ProductType
 from ..descriptions import AttributeDescriptions, AttributeValueDescriptions
 from ..enums import AttributeInputTypeEnum, AttributeTypeEnum
 from ..types import Attribute, AttributeValue
+from .common import ReorderInput
 
 
 class AttributeValueCreateInput(graphene.InputObjectType):
@@ -96,22 +97,13 @@ class AttributeAssignInput(graphene.InputObjectType):
     )
 
 
-class ReorderInput(graphene.InputObjectType):
-    id = graphene.ID(required=True, description="The ID of the item to move.")
-    sort_order = graphene.Int(
-        description=(
-            "The new relative sorting position of the item (from -inf to +inf)."
-        )
-    )
-
-
 class AttributeMixin:
     @classmethod
     def check_values_are_unique(cls, values_input, attribute):
         # Check values uniqueness in case of creating new attribute.
         existing_values = attribute.values.values_list("slug", flat=True)
         for value_data in values_input:
-            slug = slugify(value_data["name"])
+            slug = slugify(value_data["name"], allow_unicode=True)
             if slug in existing_values:
                 msg = (
                     "Value %s already exists within this attribute."
@@ -125,7 +117,10 @@ class AttributeMixin:
                     }
                 )
 
-        new_slugs = [slugify(value_data["name"]) for value_data in values_input]
+        new_slugs = [
+            slugify(value_data["name"], allow_unicode=True)
+            for value_data in values_input
+        ]
         if len(set(new_slugs)) != len(new_slugs):
             raise ValidationError(
                 {
@@ -149,7 +144,7 @@ class AttributeMixin:
             return
 
         for value_data in values_input:
-            value_data["slug"] = slugify(value_data["name"])
+            value_data["slug"] = slugify(value_data["name"], allow_unicode=True)
             attribute_value = models.AttributeValue(**value_data, attribute=attribute)
             try:
                 attribute_value.full_clean()
@@ -589,7 +584,7 @@ class AttributeValueCreate(ModelMutation):
     @classmethod
     def clean_input(cls, info, instance, data):
         cleaned_input = super().clean_input(info, instance, data)
-        cleaned_input["slug"] = slugify(cleaned_input["name"])
+        cleaned_input["slug"] = slugify(cleaned_input["name"], allow_unicode=True)
         return cleaned_input
 
     @classmethod
@@ -632,7 +627,7 @@ class AttributeValueUpdate(ModelMutation):
     def clean_input(cls, info, instance, data):
         cleaned_input = super().clean_input(info, instance, data)
         if "name" in cleaned_input:
-            cleaned_input["slug"] = slugify(cleaned_input["name"])
+            cleaned_input["slug"] = slugify(cleaned_input["name"], allow_unicode=True)
         return cleaned_input
 
     @classmethod

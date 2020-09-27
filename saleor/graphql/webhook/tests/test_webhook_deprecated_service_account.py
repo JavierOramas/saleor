@@ -1,11 +1,10 @@
 import graphene
 import pytest
 
-from saleor.app.models import App
-from saleor.graphql.tests.utils import assert_no_permission, get_graphql_content
-from saleor.graphql.webhook.enums import WebhookEventTypeEnum
-from saleor.webhook.models import Webhook
-
+from ....app.models import App
+from ....webhook.models import Webhook
+from ...tests.utils import assert_no_permission, get_graphql_content
+from ..enums import WebhookEventTypeEnum
 from .test_webhook import QUERY_WEBHOOKS_WITH_SORT
 
 WEBHOOK_CREATE_BY_STAFF = """
@@ -26,7 +25,7 @@ WEBHOOK_CREATE_BY_STAFF = """
 
 
 def test_webhook_create_by_staff_and_service_account(
-    staff_api_client, app, permission_manage_webhooks, permission_manage_orders,
+    staff_api_client, app, permission_manage_apps, permission_manage_orders,
 ):
     query = WEBHOOK_CREATE_BY_STAFF
     app.permissions.add(permission_manage_orders)
@@ -36,7 +35,7 @@ def test_webhook_create_by_staff_and_service_account(
         "events": [WebhookEventTypeEnum.ORDER_CREATED.name],
         "service_account": service_account_id,
     }
-    staff_api_client.user.user_permissions.add(permission_manage_webhooks)
+    staff_api_client.user.user_permissions.add(permission_manage_apps)
     response = staff_api_client.post_graphql(query, variables=variables)
     get_graphql_content(response)
     new_webhook = Webhook.objects.get()
@@ -88,7 +87,7 @@ def test_webhook_create_by_staff_for_sa_without_permission(staff_api_client, app
     ],
 )
 def test_query_webhooks_with_sort(
-    webhooks_sort, result_order, staff_api_client, permission_manage_webhooks
+    webhooks_sort, result_order, staff_api_client, permission_manage_apps
 ):
     backupApp = App.objects.create(name="backupApp", is_active=True)
     app = App.objects.create(name="app", is_active=True)
@@ -104,7 +103,7 @@ def test_query_webhooks_with_sort(
         ]
     )
     variables = {"sort_by": webhooks_sort}
-    staff_api_client.user.user_permissions.add(permission_manage_webhooks)
+    staff_api_client.user.user_permissions.add(permission_manage_apps)
     response = staff_api_client.post_graphql(QUERY_WEBHOOKS_WITH_SORT, variables)
     content = get_graphql_content(response)
     webhooks = content["data"]["webhooks"]["edges"]

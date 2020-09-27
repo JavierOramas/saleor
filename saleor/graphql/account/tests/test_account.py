@@ -1,10 +1,10 @@
 import re
 import uuid
 from collections import defaultdict
+from datetime import timedelta
 from unittest.mock import ANY, MagicMock, Mock, patch
 
 import graphene
-import jwt
 import pytest
 from django.contrib.auth.models import Group
 from django.contrib.auth.tokens import default_token_generator
@@ -12,32 +12,26 @@ from django.core.exceptions import ValidationError
 from django.core.files import File
 from django.core.validators import URLValidator
 from django.test import override_settings
-from django.utils import timezone
 from freezegun import freeze_time
 from prices import Money
 
-from saleor.account import events as account_events
-from saleor.account.error_codes import AccountErrorCode
-from saleor.account.models import Address, User
-from saleor.account.utils import create_jwt_token
-from saleor.checkout import AddressType
-from saleor.core.permissions import AccountPermissions, OrderPermissions
-from saleor.graphql.account.mutations.base import INVALID_TOKEN
-from saleor.graphql.account.mutations.staff import (
-    CustomerDelete,
-    StaffDelete,
-    StaffUpdate,
-    UserDelete,
-)
-from saleor.graphql.account.tests.utils import convert_dict_keys_to_camel_case
-from saleor.graphql.core.utils import str_to_enum
-from saleor.graphql.tests.utils import (
+from ....account import events as account_events
+from ....account.error_codes import AccountErrorCode
+from ....account.models import Address, User
+from ....checkout import AddressType
+from ....core.jwt import create_token
+from ....core.permissions import AccountPermissions, OrderPermissions
+from ....order.models import FulfillmentStatus, Order
+from ....product.tests.utils import create_image
+from ...core.utils import str_to_enum
+from ...tests.utils import (
     assert_no_permission,
     get_graphql_content,
     get_multipart_request_body,
 )
-from saleor.order.models import FulfillmentStatus, Order
-from saleor.product.tests.utils import create_image
+from ..mutations.base import INVALID_TOKEN
+from ..mutations.staff import CustomerDelete, StaffDelete, StaffUpdate, UserDelete
+from ..tests.utils import convert_dict_keys_to_camel_case
 
 
 @pytest.fixture
@@ -76,80 +70,6 @@ def query_staff_users_with_filter():
     }
     """
     return query
-
-
-def test_create_token_mutation(api_client, staff_user, settings):
-    query = """
-    mutation TokenCreate($email: String!, $password: String!) {
-        tokenCreate(email: $email, password: $password) {
-            token
-            errors {
-                field
-                message
-            }
-        }
-    }
-    """
-    variables = {"email": staff_user.email, "password": "password"}
-    time = timezone.now()
-    with freeze_time(time):
-        response = api_client.post_graphql(query, variables)
-    content = get_graphql_content(response)
-    token_data = content["data"]["tokenCreate"]
-    token = jwt.decode(token_data["token"], settings.SECRET_KEY)
-    staff_user.refresh_from_db()
-    assert staff_user.last_login == time
-    assert token["email"] == staff_user.email
-    assert token["user_id"] == graphene.Node.to_global_id("User", staff_user.id)
-
-    assert token_data["errors"] == []
-
-    incorrect_variables = {"email": staff_user.email, "password": "incorrect"}
-    response = api_client.post_graphql(query, incorrect_variables)
-    content = get_graphql_content(response)
-    token_data = content["data"]["tokenCreate"]
-    errors = token_data["errors"]
-    assert errors
-    assert not errors[0]["field"]
-    assert not token_data["token"]
-
-
-def test_token_create_user_data(permission_manage_orders, staff_api_client, staff_user):
-    query = """
-    mutation TokenCreate($email: String!, $password: String!) {
-        tokenCreate(email: $email, password: $password) {
-            user {
-                id
-                email
-                permissions {
-                    code
-                    name
-                }
-                userPermissions {
-                    code
-                    name
-                }
-            }
-        }
-    }
-    """
-
-    permission = permission_manage_orders
-    staff_user.user_permissions.add(permission)
-    name = permission.name
-    user_id = graphene.Node.to_global_id("User", staff_user.id)
-
-    variables = {"email": staff_user.email, "password": "password"}
-    response = staff_api_client.post_graphql(query, variables)
-    content = get_graphql_content(response)
-    token_data = content["data"]["tokenCreate"]
-    assert token_data["user"]["id"] == user_id
-    assert token_data["user"]["email"] == staff_user.email
-    assert token_data["user"]["userPermissions"][0]["name"] == name
-    assert token_data["user"]["userPermissions"][0]["code"] == "MANAGE_ORDERS"
-    # deprecated, to remove in #5389
-    assert token_data["user"]["permissions"][0]["name"] == name
-    assert token_data["user"]["permissions"][0]["code"] == "MANAGE_ORDERS"
 
 
 FULL_USER_QUERY = """
@@ -938,6 +858,7 @@ def test_customer_create(
     assert customer_creation_event.user == new_customer
 
 
+@freeze_time("2018-05-31 12:00:01")
 @patch("saleor.account.emails._send_set_user_password_email_with_url.delay")
 def test_customer_create_send_password_with_url(
     _send_set_user_password_email_with_url_mock,
@@ -1302,6 +1223,7 @@ def test_account_request_deletion(send_delete_confirmation_email_mock, user_api_
     url_validator(url)
 
 
+@freeze_time("2018-05-31 12:00:01")
 @patch("saleor.account.emails._send_account_delete_confirmation_email_with_url.delay")
 def test_account_request_deletion_token_validation(
     send_account_delete_confirmation_email_with_url_mock, user_api_client
@@ -1351,6 +1273,7 @@ def test_account_request_deletion_storefront_hosts_not_allowed(
     send_account_delete_confirmation_email_with_url_mock.assert_not_called()
 
 
+@freeze_time("2018-05-31 12:00:01")
 @patch("saleor.account.emails._send_account_delete_confirmation_email_with_url.delay")
 def test_account_request_deletion_all_storefront_hosts_allowed(
     send_account_delete_confirmation_email_with_url_mock, user_api_client, settings
@@ -1373,6 +1296,7 @@ def test_account_request_deletion_all_storefront_hosts_allowed(
     url_validator(url)
 
 
+@freeze_time("2018-05-31 12:00:01")
 @patch("saleor.account.emails._send_account_delete_confirmation_email_with_url.delay")
 def test_account_request_deletion_subdomain(
     send_account_delete_confirmation_email_with_url_mock, user_api_client, settings
@@ -1407,6 +1331,7 @@ ACCOUNT_DELETE_MUTATION = """
 """
 
 
+@freeze_time("2018-05-31 12:00:01")
 def test_account_delete(user_api_client):
     user = user_api_client.user
     token = default_token_generator.make_token(user)
@@ -1450,6 +1375,7 @@ def test_account_delete_staff_user(staff_api_client):
     assert User.objects.filter(pk=user.id).exists()
 
 
+@freeze_time("2018-05-31 12:00:01")
 def test_account_delete_other_customer_token(user_api_client):
     user = user_api_client.user
     other_user = User.objects.create(email="temp@example.com")
@@ -1730,6 +1656,7 @@ def test_staff_create_out_of_scope_group(
     )
 
 
+@freeze_time("2018-05-31 12:00:01")
 @patch("saleor.account.emails._send_set_user_password_email_with_url.delay")
 def test_staff_create_send_password_with_url(
     _send_set_user_password_email_with_url_mock,
@@ -2483,11 +2410,13 @@ SET_PASSWORD_MUTATION = """
                 id
             }
             token
+            refreshToken
         }
     }
 """
 
 
+@freeze_time("2018-05-31 12:00:01")
 def test_set_password(user_api_client, customer_user):
     token = default_token_generator.make_token(customer_user)
     password = "spanish-inquisition"
@@ -2533,6 +2462,7 @@ def test_set_password_invalid_email(user_api_client):
     assert account_errors[0]["code"] == AccountErrorCode.NOT_FOUND.name
 
 
+@freeze_time("2018-05-31 12:00:01")
 def test_set_password_invalid_password(user_api_client, customer_user, settings):
     settings.AUTH_PASSWORD_VALIDATORS = [
         {
@@ -3044,6 +2974,7 @@ def test_account_reset_password(
     url_validator(url)
 
 
+@freeze_time("2018-05-31 12:00:01")
 @patch("saleor.graphql.account.mutations.base.match_orders_with_new_user")
 def test_account_confirmation(
     match_orders_with_new_user_mock, api_client, customer_user
@@ -3064,6 +2995,7 @@ def test_account_confirmation(
     assert customer_user.is_active is True
 
 
+@freeze_time("2018-05-31 12:00:01")
 @patch("saleor.graphql.account.mutations.base.match_orders_with_new_user")
 def test_account_confirmation_invalid_user(
     match_orders_with_new_user_mock, user_api_client, customer_user
@@ -4192,12 +4124,13 @@ mutation emailUpdate($token: String!) {
 
 def test_email_update(user_api_client, customer_user):
     new_email = "new_email@example.com"
-    token_kwargs = {
+    payload = {
         "old_email": customer_user.email,
         "new_email": new_email,
         "user_pk": customer_user.pk,
     }
-    token = create_jwt_token(token_kwargs)
+
+    token = create_token(payload, timedelta(hours=1))
     variables = {"token": token}
 
     response = user_api_client.post_graphql(EMAIL_UPDATE_QUERY, variables)
@@ -4207,12 +4140,12 @@ def test_email_update(user_api_client, customer_user):
 
 
 def test_email_update_to_existing_email(user_api_client, customer_user, staff_user):
-    token_kwargs = {
+    payload = {
         "old_email": customer_user.email,
         "new_email": staff_user.email,
         "user_pk": customer_user.pk,
     }
-    token = create_jwt_token(token_kwargs)
+    token = create_token(payload, timedelta(hours=1))
     variables = {"token": token}
 
     response = user_api_client.post_graphql(EMAIL_UPDATE_QUERY, variables)

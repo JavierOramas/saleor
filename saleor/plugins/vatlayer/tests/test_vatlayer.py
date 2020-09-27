@@ -7,19 +7,20 @@ from django.core.exceptions import ValidationError
 from django_countries.fields import Country
 from prices import Money, MoneyRange, TaxedMoney, TaxedMoneyRange
 
-from saleor.checkout import calculations
-from saleor.checkout.utils import add_variant_to_checkout
-from saleor.core.taxes import quantize_price, zero_taxed_money
-from saleor.plugins.manager import get_plugins_manager
-from saleor.plugins.models import PluginConfiguration
-from saleor.plugins.vatlayer import (
+from ....checkout import calculations
+from ....checkout.utils import add_variant_to_checkout
+from ....core.prices import quantize_price
+from ....core.taxes import zero_taxed_money
+from ...manager import get_plugins_manager
+from ...models import PluginConfiguration
+from ...vatlayer import (
     DEFAULT_TAX_RATE_NAME,
     apply_tax_to_price,
     get_tax_rate_by_name,
     get_taxed_shipping_price,
     get_taxes_for_country,
 )
-from saleor.plugins.vatlayer.plugin import VatlayerPlugin
+from ..plugin import VatlayerPlugin
 
 
 def get_url_path(url):
@@ -426,6 +427,23 @@ def test_apply_taxes_to_product(vatlayer, settings, variant, discount_info):
     country = Country("PL")
     manager = get_plugins_manager()
     variant.product.metadata = {
+        "vatlayer.code": "standard",
+        "vatlayer.description": "standard",
+    }
+    price = manager.apply_taxes_to_product(
+        variant.product, variant.get_price([discount_info]), country
+    )
+    assert price == TaxedMoney(net=Money("4.07", "USD"), gross=Money("5.00", "USD"))
+
+
+def test_apply_taxes_to_product_uses_taxes_from_product_type(
+    vatlayer, settings, variant, discount_info
+):
+    settings.PLUGINS = ["saleor.plugins.vatlayer.plugin.VatlayerPlugin"]
+    country = Country("PL")
+    manager = get_plugins_manager()
+    variant.product.metadata = {}
+    variant.product.product_type.metadata = {
         "vatlayer.code": "standard",
         "vatlayer.description": "standard",
     }

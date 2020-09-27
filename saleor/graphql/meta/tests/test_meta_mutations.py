@@ -1,11 +1,13 @@
 import base64
 import uuid
+from unittest.mock import patch
 
 import graphene
 
-from saleor.core.error_codes import MetadataErrorCode
-from saleor.core.models import ModelWithMetadata
-from saleor.graphql.tests.utils import assert_no_permission, get_graphql_content
+from ....core.error_codes import MetadataErrorCode
+from ....core.models import ModelWithMetadata
+from ....invoice.models import Invoice
+from ...tests.utils import assert_no_permission, get_graphql_content
 
 PRIVATE_KEY = "private_key"
 PRIVATE_VALUE = "private_vale"
@@ -217,6 +219,38 @@ def test_add_public_metadata_for_myself_as_customer(user_api_client):
     )
 
 
+def test_add_private_metadata_for_invoice(staff_api_client, permission_manage_orders):
+    # given
+    invoice = Invoice.objects.create(number="1/7/2020")
+    invoice_id = graphene.Node.to_global_id("Invoice", invoice.pk)
+
+    # when
+    response = execute_update_private_metadata_for_item(
+        staff_api_client, permission_manage_orders, invoice_id, "Invoice"
+    )
+
+    # then
+    assert item_contains_proper_private_metadata(
+        response["data"]["updatePrivateMetadata"]["item"], invoice, invoice_id
+    )
+
+
+def test_add_public_metadata_for_invoice(staff_api_client, permission_manage_orders):
+    # given
+    invoice = Invoice.objects.create(number="1/7/2020")
+    invoice_id = graphene.Node.to_global_id("Invoice", invoice.pk)
+
+    # when
+    response = execute_update_public_metadata_for_item(
+        staff_api_client, permission_manage_orders, invoice_id, "Invoice"
+    )
+
+    # then
+    assert item_contains_proper_public_metadata(
+        response["data"]["updateMetadata"]["item"], invoice, invoice_id
+    )
+
+
 def test_add_public_metadata_for_myself_as_staff(staff_api_client):
     # given
     staff = staff_api_client.user
@@ -368,8 +402,9 @@ def test_add_public_metadata_for_fulfillment(
     )
 
 
+@patch("saleor.plugins.manager.PluginsManager.product_updated")
 def test_add_public_metadata_for_product(
-    staff_api_client, permission_manage_products, product
+    updated_webhook_mock, staff_api_client, permission_manage_products, product
 ):
     # given
     product_id = graphene.Node.to_global_id("Product", product.pk)
@@ -383,6 +418,7 @@ def test_add_public_metadata_for_product(
     assert item_contains_proper_public_metadata(
         response["data"]["updateMetadata"]["item"], product, product_id
     )
+    updated_webhook_mock.assert_called_once_with(product)
 
 
 def test_add_public_metadata_for_product_type(
@@ -864,8 +900,9 @@ def test_delete_public_metadata_for_fulfillment(
     )
 
 
+@patch("saleor.plugins.manager.PluginsManager.product_updated")
 def test_delete_public_metadata_for_product(
-    staff_api_client, permission_manage_products, product
+    updated_webhook_mock, staff_api_client, permission_manage_products, product
 ):
     # given
     product.store_value_in_metadata({PUBLIC_KEY: PUBLIC_VALUE})
@@ -881,6 +918,7 @@ def test_delete_public_metadata_for_product(
     assert item_without_public_metadata(
         response["data"]["deleteMetadata"]["item"], product, product_id
     )
+    updated_webhook_mock.assert_called_once_with(product)
 
 
 def test_delete_public_metadata_for_product_type(
@@ -1373,8 +1411,9 @@ def test_add_private_metadata_for_fulfillment(
     )
 
 
+@patch("saleor.plugins.manager.PluginsManager.product_updated")
 def test_add_private_metadata_for_product(
-    staff_api_client, permission_manage_products, product
+    updated_webhook_mock, staff_api_client, permission_manage_products, product
 ):
     # given
     product_id = graphene.Node.to_global_id("Product", product.pk)
@@ -1388,6 +1427,7 @@ def test_add_private_metadata_for_product(
     assert item_contains_proper_private_metadata(
         response["data"]["updatePrivateMetadata"]["item"], product, product_id
     )
+    updated_webhook_mock.assert_called_once_with(product)
 
 
 def test_add_private_metadata_for_product_type(
@@ -1891,8 +1931,9 @@ def test_delete_private_metadata_for_fulfillment(
     )
 
 
+@patch("saleor.plugins.manager.PluginsManager.product_updated")
 def test_delete_private_metadata_for_product(
-    staff_api_client, permission_manage_products, product
+    updated_webhook_mock, staff_api_client, permission_manage_products, product
 ):
     # given
     product.store_value_in_private_metadata({PRIVATE_KEY: PRIVATE_VALUE})
@@ -1908,6 +1949,7 @@ def test_delete_private_metadata_for_product(
     assert item_without_private_metadata(
         response["data"]["deletePrivateMetadata"]["item"], product, product_id
     )
+    updated_webhook_mock.assert_called_once_with(product)
 
 
 def test_delete_private_metadata_for_product_type(

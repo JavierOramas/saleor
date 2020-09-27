@@ -4,14 +4,14 @@ import graphene
 import pytest
 from django.contrib.auth.models import AnonymousUser
 
-from saleor.core.exceptions import InsufficientStock
-from saleor.core.permissions import OrderPermissions
-from saleor.graphql.tests.utils import assert_no_permission, get_graphql_content
-from saleor.order import OrderStatus
-from saleor.order.error_codes import OrderErrorCode
-from saleor.order.events import OrderEvents
-from saleor.order.models import FulfillmentStatus
-from saleor.warehouse.models import Allocation, Stock
+from ....core.exceptions import InsufficientStock
+from ....core.permissions import OrderPermissions
+from ....order import OrderStatus
+from ....order.error_codes import OrderErrorCode
+from ....order.events import OrderEvents
+from ....order.models import FulfillmentStatus
+from ....warehouse.models import Allocation, Stock
+from ...tests.utils import assert_no_permission, get_graphql_content
 
 ORDER_FULFILL_QUERY = """
 mutation fulfillOrder(
@@ -1017,3 +1017,49 @@ def test_fulfillment_query(
         "orderLine": {"id": order_line_2_id},
         "quantity": order_line_2.quantity,
     } in fulfillment_data["lines"]
+
+
+QUERY_ORDER_FULFILL_DATA = """
+query OrderFulfillData($id: ID!) {
+    order(id: $id) {
+        id
+        lines {
+            variant {
+                stocks {
+                    warehouse {
+                        id
+                    }
+                    quantity
+                    quantityAllocated
+                }
+            }
+        }
+    }
+}
+"""
+
+
+def test_staff_can_query_order_fulfill_data(
+    staff_api_client, order_with_lines, permission_manage_orders
+):
+    order_id = graphene.Node.to_global_id("Order", order_with_lines.pk)
+    variables = {"id": order_id}
+    response = staff_api_client.post_graphql(
+        QUERY_ORDER_FULFILL_DATA, variables, permissions=[permission_manage_orders]
+    )
+    content = get_graphql_content(response)
+    data = content["data"]["order"]["lines"]
+    assert len(data) == 2
+    assert data[0]["variant"]["stocks"][0]["quantity"] == 5
+    assert data[0]["variant"]["stocks"][0]["quantityAllocated"] == 3
+    assert data[1]["variant"]["stocks"][0]["quantity"] == 2
+    assert data[1]["variant"]["stocks"][0]["quantityAllocated"] == 2
+
+
+def test_staff_can_query_order_fulfill_data_without_permission(
+    staff_api_client, order_with_lines
+):
+    order_id = graphene.Node.to_global_id("Order", order_with_lines.pk)
+    variables = {"id": order_id}
+    response = staff_api_client.post_graphql(QUERY_ORDER_FULFILL_DATA, variables)
+    assert_no_permission(response)

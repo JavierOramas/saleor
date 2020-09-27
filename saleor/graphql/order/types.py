@@ -1,10 +1,12 @@
 import graphene
 from django.core.exceptions import ValidationError
 from graphene import relay
-from graphql_jwt.exceptions import PermissionDenied
 
+from ...core.anonymize import obfuscate_address, obfuscate_email
+from ...core.exceptions import PermissionDenied
 from ...core.permissions import AccountPermissions, OrderPermissions
 from ...core.taxes import display_gross_prices
+from ...graphql.utils import get_user_or_app_from_context
 from ...order import OrderStatus, models
 from ...order.models import FulfillmentStatus
 from ...order.utils import get_order_country, get_valid_shipping_methods_for_order
@@ -12,11 +14,13 @@ from ...plugins.manager import get_plugins_manager
 from ...product.templatetags.product_images import get_product_image_thumbnail
 from ...warehouse import models as warehouse_models
 from ..account.types import User
+from ..account.utils import requestor_has_access
 from ..core.connection import CountableDjangoObjectType
 from ..core.types.common import Image
 from ..core.types.money import Money, TaxedMoney
 from ..decorators import permission_required
 from ..giftcard.types import GiftCard
+from ..invoice.types import Invoice
 from ..meta.deprecated.resolvers import resolve_meta, resolve_private_meta
 from ..meta.types import ObjectWithMetadata
 from ..payment.types import OrderAction, Payment, PaymentChargeStatusEnum
@@ -50,6 +54,9 @@ class OrderEvent(CountableDjangoObjectType):
     quantity = graphene.Int(description="Number of items.")
     composed_id = graphene.String(description="Composed ID of the Fulfillment.")
     order_number = graphene.String(description="User-friendly number of an order.")
+    invoice_number = graphene.String(
+        description="Number of an invoice related to the order."
+    )
     oversold_items = graphene.List(
         graphene.String, description="List of oversold lines names."
     )
@@ -119,6 +126,10 @@ class OrderEvent(CountableDjangoObjectType):
     @staticmethod
     def resolve_order_number(root: models.OrderEvent, _info):
         return root.order_id
+
+    @staticmethod
+    def resolve_invoice_number(root: models.OrderEvent, _info):
+        return root.parameters.get("invoice_number")
 
     @staticmethod
     def resolve_lines(root: models.OrderEvent, _info):
@@ -229,6 +240,7 @@ class OrderLine(CountableDjangoObjectType):
     unit_price = graphene.Field(
         TaxedMoney, description="Price of the single item in the order line."
     )
+    total_price = graphene.Field(TaxedMoney, description="Price of the order line.",)
     variant = graphene.Field(
         ProductVariant,
         required=False,
@@ -276,6 +288,10 @@ class OrderLine(CountableDjangoObjectType):
         return root.unit_price
 
     @staticmethod
+    def resolve_total_price(root: models.OrderLine, _info):
+        return root.unit_price * root.quantity
+
+    @staticmethod
     def resolve_translated_product_name(root: models.OrderLine, _info):
         return root.translated_product_name
 
@@ -302,6 +318,9 @@ class Order(CountableDjangoObjectType):
         ShippingMethod,
         required=False,
         description="Shipping methods that can be used with this order.",
+    )
+    invoices = graphene.List(
+        Invoice, required=False, description="List of order invoices."
     )
     number = graphene.String(description="User-friendly number of an order.")
     is_paid = graphene.Boolean(description="Informs if an order is fully paid.")
@@ -369,6 +388,20 @@ class Order(CountableDjangoObjectType):
             "voucher",
             "weight",
         ]
+
+    @staticmethod
+    def resolve_billing_address(root: models.Order, info):
+        requester = get_user_or_app_from_context(info.context)
+        if requestor_has_access(requester, root.user, OrderPermissions.MANAGE_ORDERS):
+            return root.billing_address
+        return obfuscate_address(root.billing_address)
+
+    @staticmethod
+    def resolve_shipping_address(root: models.Order, info):
+        requester = get_user_or_app_from_context(info.context)
+        if requestor_has_access(requester, root.user, OrderPermissions.MANAGE_ORDERS):
+            return root.shipping_address
+        return obfuscate_address(root.shipping_address)
 
     @staticmethod
     def resolve_shipping_price(root: models.Order, _info):
@@ -463,13 +496,17 @@ class Order(CountableDjangoObjectType):
         return True
 
     @staticmethod
-    def resolve_user_email(root: models.Order, _info):
-        return root.get_customer_email()
+    def resolve_user_email(root: models.Order, info):
+        requester = get_user_or_app_from_context(info.context)
+        customer_email = root.get_customer_email()
+        if requestor_has_access(requester, root.user, OrderPermissions.MANAGE_ORDERS):
+            return customer_email
+        return obfuscate_email(customer_email)
 
     @staticmethod
     def resolve_user(root: models.Order, info):
-        user = info.context.user
-        if user == root.user or user.has_perm(AccountPermissions.MANAGE_USERS):
+        requester = get_user_or_app_from_context(info.context)
+        if requestor_has_access(requester, root.user, AccountPermissions.MANAGE_USERS):
             return root.user
         raise PermissionDenied()
 
@@ -492,6 +529,13 @@ class Order(CountableDjangoObjectType):
             else:
                 shipping_method.price = taxed_price.net
         return available
+
+    @staticmethod
+    def resolve_invoices(root: models.Order, info):
+        requester = get_user_or_app_from_context(info.context)
+        if requestor_has_access(requester, root.user, OrderPermissions.MANAGE_ORDERS):
+            return root.invoices.all()
+        raise PermissionDenied()
 
     @staticmethod
     def resolve_is_shipping_required(root: models.Order, _info):

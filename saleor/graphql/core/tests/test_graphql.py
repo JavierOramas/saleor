@@ -9,10 +9,10 @@ from django.shortcuts import reverse
 from graphql.error import GraphQLError
 from graphql_relay import to_global_id
 
-from saleor.graphql.product.types import Product
-from saleor.graphql.tests.utils import get_graphql_content
-from saleor.graphql.utils import get_nodes
-from saleor.graphql.utils.filters import filter_by_query_param
+from ...product.types import Product
+from ...tests.utils import get_graphql_content
+from ...utils import get_nodes
+from ...utils.filters import filter_by_query_param
 
 
 def test_middleware_dont_generate_sql_requests(client, settings, assert_num_queries):
@@ -79,14 +79,14 @@ def test_real_query(user_api_client, product):
     attr_value = product_attr.values.first()
     query = """
     query Root($categoryId: ID!, $sortBy: ProductOrder, $first: Int,
-            $attributesFilter: [AttributeInput], $minPrice: Float, $maxPrice: Float) {
+            $attributesFilter: [AttributeInput]) {
 
         category(id: $categoryId) {
             ...CategoryPageFragmentQuery
             __typename
         }
         products(first: $first, sortBy: $sortBy, filter: {categories: [$categoryId],
-            attributes: $attributesFilter, price: {gte: $minPrice, lte: $maxPrice}}) {
+            attributes: $attributesFilter}) {
 
             ...ProductListFragmentQuery
             __typename

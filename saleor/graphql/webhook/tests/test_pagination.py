@@ -1,8 +1,8 @@
 import pytest
 
-from saleor.app.models import App
-from saleor.graphql.tests.utils import get_graphql_content
-from saleor.webhook.models import Webhook
+from ....app.models import App
+from ....webhook.models import Webhook
+from ...tests.utils import get_graphql_content
 
 
 @pytest.fixture
@@ -93,14 +93,14 @@ def test_webhooks_pagination_with_sorting(
     sort_by,
     webhooks_order,
     staff_api_client,
-    permission_manage_webhooks,
+    permission_manage_apps,
     webhooks_for_pagination,
 ):
     page_size = 3
 
     variables = {"first": page_size, "after": None, "sortBy": sort_by}
     response = staff_api_client.post_graphql(
-        QUERY_WEBHOOKS_PAGINATION, variables, permissions=[permission_manage_webhooks],
+        QUERY_WEBHOOKS_PAGINATION, variables, permissions=[permission_manage_apps],
     )
     content = get_graphql_content(response)
     webhooks_nodes = content["data"]["webhooks"]["edges"]
@@ -122,14 +122,14 @@ def test_webhooks_pagination_with_filtering(
     filter_by,
     webhooks_order,
     staff_api_client,
-    permission_manage_webhooks,
+    permission_manage_apps,
     webhooks_for_pagination,
 ):
     page_size = 2
 
     variables = {"first": page_size, "after": None, "filter": filter_by}
     response = staff_api_client.post_graphql(
-        QUERY_WEBHOOKS_PAGINATION, variables, permissions=[permission_manage_webhooks],
+        QUERY_WEBHOOKS_PAGINATION, variables, permissions=[permission_manage_apps],
     )
     content = get_graphql_content(response)
     webhooks_nodes = content["data"]["webhooks"]["edges"]

@@ -5,9 +5,9 @@ from typing import Optional
 from uuid import uuid4
 
 from django.conf import settings
-from django.contrib.postgres.fields import JSONField
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.db.models import JSONField  # type: ignore
 from django.db.models import F, Max, Sum
 from django.utils.timezone import now
 from django_measurement.models import MeasurementField
@@ -29,6 +29,10 @@ from . import FulfillmentStatus, OrderEvents, OrderStatus
 
 
 class OrderQueryset(models.QuerySet):
+    def get_by_checkout_token(self, token):
+        """Return non-draft order with matched checkout token."""
+        return self.confirmed().filter(checkout_token=token).first()
+
     def confirmed(self):
         """Return non-draft orders."""
         return self.exclude(status=OrderStatus.DRAFT)
@@ -238,7 +242,20 @@ class Order(ModelWithMetadata):
     def is_pre_authorized(self):
         return (
             self.payments.filter(
-                is_active=True, transactions__kind=TransactionKind.AUTH
+                is_active=True,
+                transactions__kind=TransactionKind.AUTH,
+                transactions__action_required=False,
+            )
+            .filter(transactions__is_success=True)
+            .exists()
+        )
+
+    def is_captured(self):
+        return (
+            self.payments.filter(
+                is_active=True,
+                transactions__kind=TransactionKind.CAPTURE,
+                transactions__action_required=False,
             )
             .filter(transactions__is_success=True)
             .exists()
@@ -512,10 +529,3 @@ class OrderEvent(models.Model):
 
     def __repr__(self):
         return f"{self.__class__.__name__}(type={self.type!r}, user={self.user!r})"
-
-
-class Invoice(models.Model):
-    order = models.ForeignKey(Order, null=True, on_delete=models.SET_NULL)
-    number = models.CharField(max_length=255)
-    created = models.DateTimeField(auto_now_add=True)
-    url = models.URLField(max_length=2048)
